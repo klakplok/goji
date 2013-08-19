@@ -1,0 +1,6 @@
+description = "Goji's public API (AST, DSLs et package registry)"
+requires = ""
+version = "0.1"
+archive(byte) = "goji_lib.cma"
+archive(native) = "goji_lib.cmxa"
+exists_if = "goji_lib.cma"

@@ -1,0 +1,4 @@
+goji_internal.cmo : javaScript.cmo
+goji_internal.cmx : javaScript.cmx
+javaScript.cmo :
+javaScript.cmx :

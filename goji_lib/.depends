@@ -1,0 +1,22 @@
+goji.cmo : goji_registry.cmo goji_license.cmo goji_grab.cmi goji_dsl.cmo \
+    goji_ast.cmo
+goji.cmx : goji_registry.cmx goji_license.cmx goji_grab.cmx goji_dsl.cmx \
+    goji_ast.cmx
+goji_ast.cmo :
+goji_ast.cmx :
+goji_config.cmo :
+goji_config.cmx :
+goji_dsl.cmo : goji_syntax.cmo goji_ast.cmo
+goji_dsl.cmx : goji_syntax.cmx goji_ast.cmx
+goji_engine.cmo : goji_license.cmo goji_grab.cmi goji_ast.cmo
+goji_engine.cmx : goji_license.cmx goji_grab.cmx goji_ast.cmx
+goji_grab.cmo : goji_grab.cmi
+goji_grab.cmx : goji_grab.cmi
+goji_license.cmo :
+goji_license.cmx :
+goji_messages.cmo : goji_config.cmo
+goji_messages.cmx : goji_config.cmx
+goji_registry.cmo : goji_license.cmo goji_grab.cmi goji_ast.cmo
+goji_registry.cmx : goji_license.cmx goji_grab.cmx goji_ast.cmx
+goji_syntax.cmo : goji_ast.cmo
+goji_syntax.cmx : goji_ast.cmx

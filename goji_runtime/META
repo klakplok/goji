@@ -1,0 +1,5 @@
+description = "Goji's run-time library (JavaScript / Browser bindings + internals)"
+requires = ""
+version = "0.1"
+archive(byte) = "goji_runtime.cma"
+archive(native) = "goji_runtime.cmxa"

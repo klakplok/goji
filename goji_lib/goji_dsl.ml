@@ -1,0 +1,441 @@
+(****************************************************************************)
+(* GOJI (JavaScript Interface Generator for OCaml)                          *)
+(* This file is published under the CeCILL licence                          *)
+(* (C) 2013 Benjamin Canou                                                  *)
+(****************************************************************************)
+
+(** The general purpose DSL of Goji, close to the AST. *)
+
+(* THIS FILE IS A (WORKING) DRAFT *)
+
+open Goji_syntax
+open Goji_ast
+
+(** {2 Some Concrete Syntax}
+
+    This section introduces a few convenience parsers, taking a bribe
+    of concrete syntax and building AST parts. They should only be
+    used when combinators are not concise enough. String aliases are
+    defined in order to recognize and differentiate parsed elements in
+    the signatures of combinators. *)
+
+(** The textual version of a type parameter. *)
+type tparam = string
+
+(** OCaml qualified identifier for values. *)
+type ident = string
+
+(** OCaml qualified identifier for types. *)
+type tident = string
+
+(** A JavaScript global path in pointed notation. *)
+type jsglobal = string
+
+(** Converts a textual type parameter to its AST representation. ["a"]
+    is parsed as [(None, "a")], ["+b"] is parsed as [(Some Covariant,
+    "b")] and ["-c"] is parsed as [(Some Contravariant, "c")].*)
+let tparam (p : tparam) : Goji_ast.variance option * string = parse_type_variable p
+
+(** Splits the module path and the variable / type identifier. For
+    instance, [ident "Mod.Ule.var"] gives you
+    [(["Mod";"Ule"],"var")]. *)
+let ident (n : ident) = Goji_syntax.parse_qualified_name n
+(** Same as {!ident} *)
+let tident (n : tident) = Goji_syntax.parse_qualified_name n
+
+(** Transforms the textual pointed notation of field accesses to a
+    global to its AST version. ["g.f"] is parsed to [Field ("f",
+    Global "b")]. *)
+let jsglobal (str : jsglobal) = Goji_syntax.parse_js_global str
+
+(** {2 Structure Elements} *)
+
+(** Main structure element (by default, produces an OCaml module) *)
+let structure name ?doc ctns =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Structure (name, doc, ctns)
+
+(** Main structure element (by default, produces a big title in the doc) *)
+let section name ctns =
+  Section (name, ctns)
+
+(** Produces a documentation block *)
+let doc_block doc =
+  Doc_block (Doc doc)
+
+(** Makes a list of elements appear as one (useful when writing macros) *)
+let group elts =
+  Group elts
+
+
+(** {2 Mappings} *)
+
+(** Maps the [root] variable to a value of type [JavaScript.any]. *)
+let any = Value (Any, Var "<root>")
+
+(** Maps the [root] variable to a value of type [bool]. *)
+let bool = Value (Bool, Var "<root>")
+
+(** Maps the [root] variable to a value of type [int]. *)
+let int = Value (Int, Var "<root>")
+
+(** Maps the [root] variable to a value of type [string]. *)
+let string = Value (String, Var "<root>")
+
+(** Maps the [root] variable to a value of type [float]. *)
+let float = Value (Float, Var "<root>")
+
+(** Maps the [root] variable to a value of type [unit]. *)
+let void = Value (Void, Var "<root>")
+
+(** Maps the [root] variable to a specific OCaml type. *)
+let abbrv ?(tparams = []) ?(converters = Default) tname =
+  let tpath = Goji_syntax.parse_qualified_name tname in
+  Value (Abbrv ((tparams, tpath), converters), Var "<root>")
+
+(** Maps the [root] variable to an array whose elements are mapped
+    by the given argument. *)
+let array v = Value (Array v, Var "<root>")
+
+(** Maps the [root] variable to a list whose elements are mapped by
+    the given argument. *)
+let list v = Value (List v, Var "<root>")
+
+(** Maps the [root] variable to an associative list whose values
+    are mapped by the given argument. *)
+let assoc v = Value (Assoc v, Var "<root>")
+
+(** Maps the [root] variable to a value of a type parameter. *)
+let param n = Value (Param n, Var "<root>")
+
+(** Maps the [root] variable to a tuple whose components are mapped as
+    specified by the elements of the given list. The components are
+    left as is, it is then up to you to reroot them separately using
+    the {!(@@)} operator, otherwise they may collide. For instance,
+    [tuple [ int ; float ]] describes a tuple whose two components are
+    mapped to the root of the JavaScript value with different types,
+    which is probably wrong. *)
+let tuple vs = Tuple vs
+
+(** Maps a JavaScript object to an OCaml record. To be used only in
+    type definitions or custom type converters. Record fields can be
+    written using the {!row} macro. *)
+let record fields =
+  Record fields
+
+(** A shortcut for writing the elements of a record definition. *)
+let row name ?doc def =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  (name, def, doc)
+
+(** Maps different forms of a JavaScript object to the cases of an
+    OCaml sum type. To be used only in type definitions or custom type
+    converters. Cases can be written using the {!!constr} macro. *)
+let variant cases =
+  Variant cases
+
+(** A shortcut for writing the cases of a sum type definition. *)
+let constr name ?(guard = True) ?doc defs =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  (name, guard, defs, doc)
+
+(** Maps an OCaml function to a JavaScript one. For injection, some
+    combinations of parameters will be rejected, in particular
+    optional arguments with too complex guards or the use of
+    [rest]. *)
+let callback params ret =
+  Value (Callback (params, ret), Var "<root>")
+
+let set_event ?id params ret =
+  Value (Event_setter (id, params, ret), Var "<root>")
+
+let cancel_event ?id params ret =
+  Value (Event_canceller (id, params, ret), Var "<root>")
+
+(** A specific DSL to write JavaScript constants. *)
+module Const = struct
+  let int i = Const_int i
+  let float f = Const_float f
+  let bool b = Const_bool b
+  let string s = Const_string s
+  let undefined = Const_undefined
+  let null = Const_null
+end
+
+(** A specific DSL to write guards as infix boolean expressions. *)
+module Guard = struct
+  include Const
+  let (=) s c = Const (s, c)
+  let not g = Not g
+  let (&&) gl gr = And (gl, gr)
+  let (||) gl gr = Or (gl, gr)
+  let tt = True
+  let ff = False
+  let raise ?(path = []) ex = Raise (path, ex)
+end
+
+(** {2 JavaScript storage descriptors} *)
+
+(** The predefined [root] variable, mapped to the root of the JavaScript value in
+    a type definition, the return value in functions, methods and
+    callback definitions, and the elements of collections (arrays,
+    lists ans assocs). *)
+let root = Var "<root>"
+
+(** The predefined [this] variable, mapped to the receiver object in
+    method bindings. *)
+let this = Var "<this>"
+
+(** A custom variable. *)
+let var n = Var n
+
+(** A global JavaScript variable. *)
+let global str = jsglobal str
+
+(** A named field accessor in a JavaScript object. *)
+let field root n = Field (root, n)
+
+(** A field accessor in a JavaScript array. *)
+let cell root n = Cell (root, n)
+
+(** A positional argument, by default of the call site [args]. Write
+    only in bodies, read only in callbacks. *)
+let arg ?(site = "args") n = Arg (site, n)
+
+(** An optional argument, pushed at the end of positional arguments. *)
+let rest ?(site = "args") () = Rest (site)
+
+(**/**)
+let rec reroot v ns =
+  match v with
+  | Tuple vs ->
+    Tuple (List.map (fun v -> reroot v ns) vs)
+  | Option (g, v) ->
+    Option (reroot_guard g ns, reroot v ns)
+  | Value (l, s) ->
+    Value (l, reroot_storage s ns)
+  | Record fields ->
+    Record (List.map
+              (fun (n, v, c) ->
+                (n, reroot v ns, c))
+              fields)
+  | Variant cases ->
+    Variant (List.map
+               (fun (n, g, vs, c) ->
+                 (n, reroot_guard g ns,
+		  List.map (fun v -> reroot v ns) vs, c))
+               cases)
+and reroot_storage sto ns =
+  match sto with
+  | Var "<root>" -> ns (* all this code for this... *)
+  | Field (s, n) -> Field (reroot_storage s ns, n)
+  | Cell (s, i) -> Cell (reroot_storage s ns, i)
+  | Var _ | Arg _ | Rest _ | Global _  as s -> s
+and reroot_guard g ns =
+  match g with
+  | Const (s, c) -> Const (reroot_storage s ns, c)
+  | Not g -> Not (reroot_guard g ns)
+  | And (gl, gr) -> And (reroot_guard gl ns, reroot_guard gr ns)
+  | Or (gl, gr) -> Or (reroot_guard gl ns, reroot_guard gr ns)
+  | Raise _ | True | False as const -> const
+(**/**)
+
+(** By default, all aforedefined mappings use the [root] variable as
+    JavaScript location. This operator relocates the root of a mapping
+    to a given location. For instance, to speak of an array of integer
+    located in the field "nb" of a JavaScript global "x", one can
+    write [array int @@ jsglobal "x.nb"]. As a more complex example
+    showing a recursive use of [(@@)], [tuple [ int @@ field root "x"
+    ; bool @@ field root "t" ] @@ field root "b"] will map a
+    JavaScript object [{b: {x: 3, t: false}}] to the OCaml value [(3,
+    false)].
+*)
+let (@@) = reroot
+
+(** {2 Predefined Mappings} *)
+
+(** Maps the consecutive cells of a JavaScript array to the components
+    of an OCaml tuple. [tuple_cells [ int : float ]] is equivalent to
+    [tuple [ int @@ cell root 0 ; float @@ cell root 1 ]].*)
+let tuple_cells vs =
+  Tuple (List.mapi (fun n v -> v @@ cell root n) vs)
+
+(** Maps named attributes of a JavaScript object to the components of
+    an OCaml tuple. [tuple_fields [ "i", int : "f", float ]] is equivalent to
+    [tuple [ int @@ field root "i" ; float @@ field root "f" ]].*)
+let tuple_fields vs =
+  Tuple (List.map (fun (f, v) -> v @@ field root f) vs)
+
+(** Maps an [undefined] JavaScript value to the [None] case and maps
+    the [Some] case using the given mapping parameter. *)
+let option_undefined def =
+  Option (Guard.(var "<root>" = undefined), def)
+
+(** Maps a [null] JavaScript value to the [None] case and maps the
+    [Some] case using the given mapping parameter. *)
+let option_null def =
+  Option (Guard.(var "<root>" = null), def)
+
+(** {2 Value mapping bodies} *)
+
+(** Calls a method on an object. By default, the call site is [args],
+    consistently with the {!args} and {!rest}, so yu do not need to
+    precise it if you have only one call site. *)
+let call ?(site = "args") sto =
+  Call (sto, site)
+
+(** Calls the JavaScript [new] operator. See {!call} for more
+    information. *)
+let call_constructor ?(site = "args") sto =
+  New (sto, site)
+
+(** Calls a method on an object. By default, the call site is [args]
+    and the receiver object is the [this] variable, consistently with
+    the rest of the DSL. In particular, you do not need to precise
+    them to use [call_method] in conjunction with {!args} and
+    {!def_method}. *)
+let call_method ?(site = "args") ?(sto = Var "<this>") name =
+  Call_method (sto, name, site)
+
+(** Returns the value at a given JavaScript location. *)
+let get sto = Access sto
+
+(** An imperative assignment of a JavaScript constant at a given
+    location. *)
+let set sto v = Inject_constants [ (v, sto) ]
+
+(** A [let  .. in] construct. *)
+let abs name v body = Abs (name, v, body)
+
+(** An [if .. then .. else] construct using a guard as condition. This
+    is also the only possibility to raise an exception.  *)
+let test guard bt bf = Test (guard, bt, bf)
+
+(** {2 Bindings} *)
+
+let def_type ?(tparams = []) ?doc tname tdef =
+  let tparams = List.map parse_type_variable tparams in
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Type (tparams, tname, tdef, doc)
+
+let def_constructor ?(tparams = []) tname name ?doc params body =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Function (name, params, body, abbrv ~tparams tname, doc)
+
+let def_method ?(tparams = []) tname name ?doc params body ret =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  let tpath = Goji_syntax.parse_qualified_name tname in
+  Method ((tparams, tpath), name, params, body, ret, doc)
+
+let def_function name ?doc params body ret =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Function (name, params, body, ret, doc)
+
+let inherits (tp1, (t1 : tident)) (tp2, (t2 : tident)) ?doc name =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Inherits (name,
+            (tp1, Goji_syntax.parse_qualified_name t1),
+            (tp2, Goji_syntax.parse_qualified_name t2),
+            doc)
+
+
+(** {2 Type Definitions} *)
+
+let abstract def = Typedef (Abstract, def)
+let public def = Typedef (Public, def)
+let gen_sym = Gen_sym
+let gen_id = Gen_sym
+let format fmt = Format
+
+(** {2 One-To-One Bindings}
+
+    These are simplified binding combinators provided for
+    convenience. They are to be used when mapping OCaml entities to
+    their direct JavaScript equivalents. *)
+
+(** Maps a fresh OCaml type to abstract JavaScript values.
+
+    Example call: [map_type ~tparams ~doc tname]
+    
+    @param tname     The name of the OCaml type.
+    @param doc       The name OCamlDoc description.
+    @param tparams   The parameters of the OCaml type, as processed by {!tparam}. *)
+let map_type ?(tparams : tparam list = []) ?doc (tname : tident) =
+  let tparams = List.map parse_type_variable tparams in
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Type (tparams, tname, abstract any, doc)
+
+(** Maps a JavaScript function to an OCaml function.
+
+    Example call: [map_function name ~doc params js_path ret]
+
+    @param name     The name of the OCaml function.
+    @param doc      The name OCamlDoc description.
+    @param js_path  The location of the JavaScript function, processed as by {!global}.
+    @param params   The description of the OCaml parameters. The
+                    JavaScript function call is the default [args] one.
+    @param ret      The description of the return value. The JavaScript return
+                    value is bound to the default variable [root]. *)
+let map_function name ?doc params (js_path : jsglobal) ret =
+  let body = Call (global js_path, "args") in
+  def_function name ?doc params body ret
+
+let map_constructor
+    ?(tparams = []) (tname : tident)
+    (name : ident) ?doc params (js : jsglobal) =
+  let body = New (jsglobal js, "args") in
+  def_constructor ~tparams tname name ?doc params body
+
+let map_method
+    ?tparams (tname : tident)
+    jname ?rename ?doc params ret =
+  let name = match rename with None -> jname | Some n -> n in
+  def_method ?tparams tname name ?doc params (call_method jname) ret
+
+(** Maps a JavaScript attribute value to a getter and (optionally a
+    setter) function(s). By default, the JavaScript name is used,
+    unless the [rename] parameter is passed. The getter is named
+    [name / rename] and the setter [set_name / set_rename]. The last
+    argument is a [value] description in which the [root] variable
+    points to the JavaScript attribute. *)
+let map_attribute
+    ?tparams (tname : tident)
+    jname ?rename ?doc ?(read_only = false) def =
+  let name = match rename with None -> jname | Some n -> n in
+  group
+    ([ def_method ?tparams tname name ?doc [] (get (field this jname)) def ]
+     @ (if read_only then []
+       else [ def_method ?tparams tname ("set_" ^ name) ?doc
+                [ Curry, "value", Nodoc, (def @@ field this jname) ]
+                Nop void ]))
+
+(** Maps a JavaScript global value to a getter and (optionally a
+    setter) function(s). The getter is named after the parameter
+    [name] and the setter [set_name]. The last argument is a [value]
+    description whose [mapping]s should only reference global
+    JavaScript storages. *)
+let map_global name ?doc ?(read_only = false) def =
+  group
+    ([ def_function name ?doc [] Nop def ]
+     @ (if read_only then []
+       else [ def_function ("set_" ^ name) ?doc
+                [ Curry, "value", Nodoc, def ]
+                Nop void ]))
+
+(** {2 Arguments} *)
+
+(** An OCaml positional argument. The name is the one used in the
+    implementation and in the generated documentation. *)
+let curry_arg name ?doc descr =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Curry, name, doc, descr
+
+(** An OCaml optional argument. The name is the OCaml label. *)
+let opt_arg name ?doc descr =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Optional, name, doc, descr
+
+(** An OCaml labeled argument. The name is the OCaml label. *)
+let labeled_arg name ?doc descr =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Labeled, name, doc, descr
