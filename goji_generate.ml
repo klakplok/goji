@@ -152,9 +152,8 @@ let grab_javascript_sources base_dir package =
       package.package_name ;
   Sys.chdir prev_wd
 
-
 (** Main entry point of the [generate] command *)
-let main base_dir fix_case packages  =
+let main base_dir fix_case event_backend packages  =
   List.iter
     (fun fn ->
       let open Dynlink in

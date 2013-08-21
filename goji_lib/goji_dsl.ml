@@ -6,7 +6,7 @@
 
 (** The general purpose DSL of Goji, close to the AST. *)
 
-(* THIS FILE IS A (WORKING) DRAFT *)
+(***************** keep comments in sync with goji_ast.ml *******************)
 
 open Goji_syntax
 open Goji_ast
@@ -135,7 +135,7 @@ let variant cases =
   Variant cases
 
 (** A shortcut for writing the cases of a sum type definition. *)
-let constr name ?(guard = True) ?doc defs =
+let constr name guard ?doc defs =
   let doc = match doc with None -> Nodoc | Some text -> Doc text in
   (name, guard, defs, doc)
 
@@ -146,11 +146,31 @@ let constr name ?(guard = True) ?doc defs =
 let callback params ret =
   Value (Callback (params, ret), Var "<root>")
 
-let set_event ?id params ret =
-  Value (Event_setter (id, params, ret), Var "<root>")
+(** A functional value meant to be an event handler. See {!callback}
+    case for an explanation of the last two parameters. Usable only in
+    parameters. See {!auto} and {!canceller} for the [canceller]
+    parameter. *)
+let event ?(canceller = Manual_canceller) params ret =
+  Value (Handler (params, ret, canceller), Var "<root>")
 
-let cancel_event ?id params ret =
-  Value (Event_canceller (id, params, ret), Var "<root>")
+(** Wraps the code to cancel an event handler. How this code is made
+    available depends on the event handling backend.  The canceller
+    [body] is generated after the body of the binding. In this
+    context, the [handler] variable points to the generated JavaScript
+    function and the [result] variable points to the result of the
+    main body. Both can be useful since some JavaScript library need
+    the original function to unregister an event handler, while some
+    others need some identifier returned by the registration
+    function. All variables from top level [Abs] bindings are also
+    available. *)
+let canceller body =
+  Canceller body
+
+(** Asks the event handling backend to insert some fake cancellation
+    mechanism, for when the library does not provide one. Not always a
+    good idea. *)
+let auto =
+  Auto_canceller
 
 (** A specific DSL to write JavaScript constants. *)
 module Const = struct
@@ -275,6 +295,22 @@ let option_undefined def =
     [Some] case using the given mapping parameter. *)
 let option_null def =
   Option (Guard.(var "<root>" = null), def)
+
+(** Map a simple JavaScript int enum as a sum type  *)
+let int_enum cases =
+  let cases = List.map
+      (fun (n, i) -> constr n Guard.(root = int i) [])
+      cases
+  in
+  variant cases
+
+(** Map a simple JavaScript string enum as a sum type  *)
+let string_enum cases =
+  let cases = List.map
+      (fun (n, s) -> constr n Guard.(root = string s) [])
+      cases
+  in
+  variant cases
 
 (** {2 Value mapping bodies} *)
 

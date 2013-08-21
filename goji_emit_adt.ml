@@ -106,8 +106,7 @@ class emitter = object (self)
     | Value (Param n, _) -> !^("'" ^ n)
     | Value (Abbrv ((targs, tname), _), _) ->
       self # format_type_args targs ^^ format_ident tname
-    | Value (Event_setter (_, params, ret), _)
-    | Value (Event_canceller (_, params, ret), _)
+    | Value (Handler (params, ret, _), _)
     | Value (Callback (params, ret), _) ->
       (if sa then !^"(" else empty)
       ^^ align (self # format_fun_type params ret)
@@ -321,7 +320,7 @@ class emitter = object (self)
     | Global n -> format_app !^"JavaScript.Ops.global" [ !^!n ]
     | Var n when n.[0] = '<' -> !^(String.sub n 1 (String.length n - 2))
     | Var n -> !^("!" ^ n ^ "'V")
-    | Arg ("args", n) -> !^"args'" ^^ int n (* TODO: check if in callback position *)
+    | Arg ("args", n) -> !^"args'" ^^ int n
     | Arg _ -> failwith "error 1458"
     | Rest _ -> failwith "error 1459"
     | Field (sto, n) ->
@@ -368,7 +367,6 @@ class emitter = object (self)
       | Global n ->
         format_app !^"Goji_internal.ensure_block_global" [ !^!n ]
       | Var n when n.[0] = '<' ->
-        (* FIXME: insert check *)
         !^(String.sub n 1 (String.length n - 2))
       | Var n ->
         format_app !^"Goji_internal.ensure_block_var" [ !^(n ^ "'V") ]
@@ -503,8 +501,7 @@ class emitter = object (self)
     | Abbrv (abbrv, Extern (inject, extract)) ->
       format_app (format_ident inject) [ !^v ]
     | Callback (params, ret)
-    | Event_setter (_, params, ret)
-    | Event_canceller (_, params, ret) ->
+    | Handler (params, ret, _) ->
       (* Generates the following pattern:
 	  Ops.wrap_fun
 	   (fun args'0 ... args'n ->
@@ -609,9 +606,7 @@ class emitter = object (self)
     (* FIXME: add injector params *)
     | Abbrv (abbrv, Extern (inject, extract)) ->
       format_app (format_ident extract) [ sto ]
-    | Callback _
-    | Event_setter _
-    | Event_canceller _ -> !^"(assert false)"
+    | Callback _ | Handler _ -> !^"(assert false)"
     | Abbrv (abbrv, Custom def) -> !^"(assert false)"
 
   method format_call_sites params body =

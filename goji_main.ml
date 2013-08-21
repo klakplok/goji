@@ -30,7 +30,7 @@ let copts_t =
     Arg.(value
 	 & opt
 	   (enum ["none", -1 ; "0", 0 ; "1", 1 ; "2", 2 ; "3", 3 ; "all", max_int]) (-1)
-	 & info ~docs ~doc  ["d" ; "debug"])
+	 & info ~docs ~doc  ["D" ; "debug"])
   in 
   let warn_t =
     let doc = "Set warning display policy, \
@@ -38,7 +38,7 @@ let copts_t =
     Arg.(value
 	 & opt
 	   (enum ["none", -1 ; "0", 0 ; "1", 1 ; "2", 2 ; "3", 3 ; "all", max_int]) 0
-	 & info ~docs ~doc  ["w" ; "warn"])
+	 & info ~docs ~doc  ["W" ; "warn"])
   in 
   let pack_copts warning_level debug_level =
     (warning_level, debug_level)
@@ -68,6 +68,11 @@ let generate_cmd =
     let no = false, info [ "dont-fix-case"] ~doc in
     last & vflag_all [ true ] [ no ; yes ]
   in
+  let event_t = 
+    let doc = "The event handling back-end to use (callbacks or lwt)." in
+    let info = info [ "e" ; "event-handling"] ~doc in
+    value & opt (enum [ "lwt", `Lwt ; "callbacks", `Callbacks ]) `Callbacks & info
+  in
   let modules_t =
     let doc = "The list of .ml or .cmxs files that define bindings." in
     value & pos_all file [] & info [] ~docv:"MODULE" ~doc
@@ -83,7 +88,7 @@ let generate_cmd =
         The OCaml sources (precompiled or not) are dynlinked sequentially and then \
         bindings are generated for all registered packages and components." ] @ help_secs
   in
-  Term.(pure (with_copts Goji_generate.main) $ copts_t $ dir_t $ fix_t $ modules_t),
+  Term.(pure (with_copts Goji_generate.main) $ copts_t $ dir_t $ fix_t $ event_t $ modules_t),
   Term.info "generate" ~sdocs:copts_sect ~doc ~man
 
 let jslink_cmd = 

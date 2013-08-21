@@ -78,3 +78,9 @@ let zlib =
   { short_name = "ZLIB" ;
     long_name = "Zlib License" ;
     url = "http://zlib.net/zlib_license.html" }
+
+(** Apache License, Version 2.0 *)
+let apache_v2 =
+  { short_name = "Apache v2.0" ;
+    long_name = "Apache License, Version 2.0" ;
+    url = "http://www.apache.org/licenses/LICENSE-2.0.txt" }

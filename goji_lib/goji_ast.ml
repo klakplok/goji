@@ -6,12 +6,16 @@
 
 (** The public AST of Goji bindings.*)
 
+(***************** keep comments in sync with goji_dsl.ml *******************)
+
 (** {2 AST Types} *)
 
 (** The type of documentation strings. *)
 type comment =
   | Doc of string
+  (** Verbatim doc string *)
   | Nodoc
+  (** This case should never be used*)
 
 (** Qualified path to an OCaml value / type. *)
 and path = string list * string
@@ -50,9 +54,9 @@ and binding =
     annotation is produced). *)
 and variance =
   | Covariant
-  (** +. *)
+  (** +'a *)
   | Contravariant
-  (** -. *)
+  (** -'a *)
 
 (** Describes the content of a type definition. *)
 and typedef =
@@ -231,8 +235,30 @@ and mapping =
       authorized one. Inside the mapping of the return value, the
       [root] variable points to the return value. Not all combinations
       of argument types are accepted for injection. *)
-  | Event_setter of event_name * parameter list * value
-  | Event_canceller of event_name * parameter list * value
+  | Handler of parameter list * value * canceller
+  (** A functional value meant to be an event handler. See {!Callback}
+      case for an explanation of the first two parameters and
+      {!canceller} *)
+
+(** The type of event cancellation methods. *)
+and canceller =
+  | Manual_canceller
+  (** Does nothing special about cancelling. *)
+  | Auto_canceller
+  (** Asks the event handling backend to insert some fake cancellation
+      mechanism, for when the library does not provide one. Not always
+      a good idea. *)
+  | Canceller of body
+  (** Provides the complete code to cancel an event handler. How this
+      code is made available depends on the event handling backend.
+      The canceller [body] is generated after the body of the
+      binding. In this context, the [handler] variable points to the
+      generated JavaScript function and the [result] variable points
+      to the result of the main body. Both can be useful since some
+      JavaScript library need the original function to unregister an
+      event handler, while some others need some identifier returned
+      by the registration function. All variables from top level [Abs]
+      bindings are also available. *)
 
 (** Constants, used to implement phantom arguments and in guards. *)
 and const =
@@ -378,10 +404,11 @@ class map = object (self)
     | Param string -> Param string
     | Callback (pl, v) ->
       Callback (List.map (self # parameter) pl, self # value v)
-    | Event_setter (event_name, pl, v) ->
-      Event_setter (event_name, List.map (self # parameter) pl, self # value v)
-    | Event_canceller (event_name, pl, v) ->
-      Event_canceller (event_name, List.map (self # parameter) pl, self # value v)
+    | Handler (pl, v, Canceller b) ->
+      Handler (List.map (self # parameter) pl, self # value v,
+               Canceller (self # body b))
+    | Handler (pl, v, c) ->
+      Handler (List.map (self # parameter) pl, self # value v, c)
 
 
   method const = function
@@ -530,10 +557,11 @@ class iter = object (self)
     | Callback (pl, v) ->
       List.iter (self # parameter) pl ;
       self # value v
-    | Event_setter (event_name, pl, v) ->
+    | Handler (pl, v, Canceller b) ->
       List.iter (self # parameter) pl ;
-      self # value v
-    | Event_canceller (event_name, pl, v) ->
+      self # value v ;
+      self # body b
+    | Handler (pl, v, c) ->
       List.iter (self # parameter) pl ;
       self # value v
 
