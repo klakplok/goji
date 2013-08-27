@@ -63,7 +63,7 @@ and component = {
       names that are not too prone to collisions.*)
   depends : string list ;
   (** The list of OCamlFind package dependencies. *)
-  elements : Goji_ast.binding list ;
+  mutable elements : Goji_ast.binding list ;
   (** The component contents. *)
 }
 

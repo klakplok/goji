@@ -60,13 +60,17 @@ let generate_cmd =
     value & opt dir Filename.current_dir_name & info
   in
   let fix_t = 
-    let doc = "If this flag is passed, the case of modules and packages will be \
-               fixed when possible, producing level 1 warnings instead of errors." in
-    let yes = true, info [ "fix-case"] ~doc in
-    let doc = "If this flag is passed, any erroneous case in a module or package name \
-               will result in an error." in
-    let no = false, info [ "dont-fix-case"] ~doc in
-    last & vflag_all [ true ] [ no ; yes ]
+    let doc = "If true, the case of modules and packages will be \
+               fixed when possible, producing warnings instead of errors." in
+    let info = info [ "fix-case"] ~doc in
+    value & opt bool true & info
+  in
+  let reorder_t = 
+    let doc = "If true, function prototypes ending with an optional \
+               argument see their parameters reordered. Otherwise, a warning \
+               will be issued." in
+    let info = info [ "reorder-params"] ~doc in
+    value & opt bool true & info
   in
   let event_t = 
     let doc = "The event handling back-end to use (callbacks or lwt)." in
@@ -88,7 +92,9 @@ let generate_cmd =
         The OCaml sources (precompiled or not) are dynlinked sequentially and then \
         bindings are generated for all registered packages and components." ] @ help_secs
   in
-  Term.(pure (with_copts Goji_generate.main) $ copts_t $ dir_t $ fix_t $ event_t $ modules_t),
+  Term.(pure (with_copts Goji_generate.main)
+	  $ copts_t $ dir_t $ fix_t $ reorder_t $ event_t
+	  $ modules_t),
   Term.info "generate" ~sdocs:copts_sect ~doc ~man
 
 let jslink_cmd = 

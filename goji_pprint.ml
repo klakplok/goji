@@ -6,6 +6,8 @@
 
 include PPrint
 
+let document_ref r = column (fun _ -> !r)
+
 let int n =
   string (string_of_int n)
 
@@ -69,16 +71,14 @@ let format_let_in pat value body =
        (!^"let " ^^ group (align (pat ^^ break 1 ^^ !^"="))
         ^^ group (nest 2 (break 1 ^^ value)) ^^ break 1
         ^^ !^"in")
-     ^^ (if body <> empty then break 1 ^^ body else empty))
+     ^^ hardline ^^ body)
 
 let format_if cond bt bf =
   group
-    (group
-       (!^"if" ^^ group (nest 2 (break 1 ^^ cond) ^^^ !^"then ("))
-     ^^ group (nest 2 (break 1 ^^ bt)) ^^ break 1 ^^ !^") "
-     ^^ group (!^"else ("
-               ^^ group (nest 2 (break 1 ^^ bf)) ^^ break 1 ^^ !^")"))
-
+    (group (!^"if " ^^ align cond ^^ !^" then (")
+     ^^ nest 2 (break 1 ^^ bt) ^^ break 1 ^^ !^") else ("
+     ^^ nest 2 (break 1 ^^ bf) ^^ break 1 ^^ !^")")
+    
 let format_match arg alts =
   group
     (group (!^"begin match" ^^ group (nest 2 (break 1 ^^ arg) ^^^ !^"with"))
@@ -88,7 +88,7 @@ let format_match arg alts =
               (fun (pat, v) ->
 		group (!^"| " ^^ pat
                        ^^ if v = empty then !^" -> ()"
-			 else nest 2 (!^" ->" ^^^ !^"(" ^^ v ^^ !^")")))
+			 else nest 2 (!^" ->" ^^^ v)))
 	      alts)
      ^^^ !^"end")
 
@@ -113,11 +113,20 @@ let format_fun_pat name ?(annot = empty) args =
   in
   name ^^^ group (align args)
 
+let format_fun pats body =
+  let body = !^"(fun " ^^ separate !^" " pats ^^ !^" ->" ^^^ body ^^ !^")" in
+  group (align (nest 3 body))
+
 let format_tuple ?(wrap = true) items =
-  group
-    ((if wrap then !^"(" else empty)
-     ^^ column (fun c -> nest c (separate (!^"," ^^ break 1) items))
-     ^^ (if wrap then !^")" else empty))
+  match items with
+  | [] when wrap -> !^"()"
+  | [] -> empty
+  | [ e ] -> e
+  | _ ->
+    group
+      ((if wrap then !^"(" else empty)
+       ^^ align (separate (!^"," ^^ break 1) items)
+       ^^ (if wrap then !^")" else empty))
 
 let format_record fs =
   match fs with
@@ -212,27 +221,37 @@ let string_of_ident (tpath, tname) =
 let format_ident ident =
   !^(string_of_ident ident)
 
-let format_app f args =
-  group (!^"(" ^^ align (f ^^ (nest 2 (break 1 ^^ flow (break 1) args)) ^^ !^")"))
+let format_app ?(wrap = true) f args =
+  if wrap then
+    group (!^"(" ^^ align (f ^^ (nest 2 (break 1 ^^ flow (break 1) args)) ^^ !^")"))
+  else
+    group (align (f ^^ (nest 2 (break 1 ^^ flow (break 1) args))))
 
 let format_ass r v =
   group (align (r ^^ !^" :=" ^^ (nest 2 (break 1 ^^ v))))
 
 type sequence_item =
-| Let_in of document * document
-| Instruction of document
+| No_semicolon of document
+| Semicolon of document
+| Last of document
 
 let format_sequence seq =
-  let rec loop = function
+  let rec loop acc seq =
+    match seq with
     | [] -> empty
-    | [ Let_in (pat, body) ] -> group (format_let_in pat body empty)
-    | [ Instruction i ] -> group i
-    | Let_in (pat, body) :: tl -> group (format_let_in pat body empty) ^^^ loop tl
-    | Instruction i :: tl when i = empty -> loop tl
-    | Instruction i :: tl -> group (i ^^ !^" ;") ^^^ loop tl
+    | [ Last i ] -> group (group acc ^^ group i)
+    | [ No_semicolon i ] -> group (group acc ^^ group i ^^^ !^"()")
+    | [ Semicolon i ] -> group (group acc ^^ group i)
+    | Last _ :: tl -> invalid_arg "format_sequence"
+    | No_semicolon i :: tl ->
+      loop (group (acc ^^ group i)) tl
+    | Semicolon i :: tl -> 
+      loop (group (acc ^^ group (i ^^ !^" ;") ^^ break 0)) tl
   in
-  loop seq
+  loop empty seq
 
-let seq_instruction i = [ Instruction i ]
-let seq_instructions is = List.map (fun i -> Instruction i) is
-let seq_let_in pat body = [ Let_in (pat,body) ]
+let seq_result i = [ Last i ]
+let seq_instruction i = [ Semicolon i ]
+let seq_instructions is = List.map (fun i -> Semicolon i) is
+let seq_instruction' i = [ No_semicolon i ]
+let seq_let_in pat body = [ No_semicolon (format_let_in pat body empty) ]

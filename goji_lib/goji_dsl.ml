@@ -71,42 +71,42 @@ let group elts =
 (** {2 Mappings} *)
 
 (** Maps the [root] variable to a value of type [JavaScript.any]. *)
-let any = Value (Any, Var "<root>")
+let any = Value (Any, Var "root")
 
 (** Maps the [root] variable to a value of type [bool]. *)
-let bool = Value (Bool, Var "<root>")
+let bool = Value (Bool, Var "root")
 
 (** Maps the [root] variable to a value of type [int]. *)
-let int = Value (Int, Var "<root>")
+let int = Value (Int, Var "root")
 
 (** Maps the [root] variable to a value of type [string]. *)
-let string = Value (String, Var "<root>")
+let string = Value (String, Var "root")
 
 (** Maps the [root] variable to a value of type [float]. *)
-let float = Value (Float, Var "<root>")
+let float = Value (Float, Var "root")
 
 (** Maps the [root] variable to a value of type [unit]. *)
-let void = Value (Void, Var "<root>")
+let void = Value (Void, Var "root")
 
 (** Maps the [root] variable to a specific OCaml type. *)
 let abbrv ?(tparams = []) ?(converters = Default) tname =
   let tpath = Goji_syntax.parse_qualified_name tname in
-  Value (Abbrv ((tparams, tpath), converters), Var "<root>")
+  Value (Abbrv ((tparams, tpath), converters), Var "root")
 
 (** Maps the [root] variable to an array whose elements are mapped
     by the given argument. *)
-let array v = Value (Array v, Var "<root>")
+let array v = Value (Array v, Var "root")
 
 (** Maps the [root] variable to a list whose elements are mapped by
     the given argument. *)
-let list v = Value (List v, Var "<root>")
+let list v = Value (List v, Var "root")
 
 (** Maps the [root] variable to an associative list whose values
     are mapped by the given argument. *)
-let assoc v = Value (Assoc v, Var "<root>")
+let assoc v = Value (Assoc v, Var "root")
 
 (** Maps the [root] variable to a value of a type parameter. *)
-let param n = Value (Param n, Var "<root>")
+let param n = Value (Param n, Var "root")
 
 (** Maps the [root] variable to a tuple whose components are mapped as
     specified by the elements of the given list. The components are
@@ -144,14 +144,14 @@ let constr name guard ?doc defs =
     optional arguments with too complex guards or the use of
     [rest]. *)
 let callback params ret =
-  Value (Callback (params, ret), Var "<root>")
+  Value (Callback (params, ret), Var "root")
 
 (** A functional value meant to be an event handler. See {!callback}
     case for an explanation of the last two parameters. Usable only in
     parameters. See {!auto} and {!canceller} for the [canceller]
     parameter. *)
 let event ?(canceller = Manual_canceller) params ret =
-  Value (Handler (params, ret, canceller), Var "<root>")
+  Value (Handler (params, ret, canceller), Var "root")
 
 (** Wraps the code to cancel an event handler. How this code is made
     available depends on the event handling backend.  The canceller
@@ -200,11 +200,11 @@ end
     a type definition, the return value in functions, methods and
     callback definitions, and the elements of collections (arrays,
     lists ans assocs). *)
-let root = Var "<root>"
+let root = Var "root"
 
 (** The predefined [this] variable, mapped to the receiver object in
     method bindings. *)
-let this = Var "<this>"
+let this = Var "this"
 
 (** A custom variable. *)
 let var n = Var n
@@ -247,7 +247,7 @@ let rec reroot v ns =
                cases)
 and reroot_storage sto ns =
   match sto with
-  | Var "<root>" -> ns (* all this code for this... *)
+  | Var "root" -> ns (* all this code for this... *)
   | Field (s, n) -> Field (reroot_storage s ns, n)
   | Cell (s, i) -> Cell (reroot_storage s ns, i)
   | Var _ | Arg _ | Rest _ | Global _  as s -> s
@@ -289,12 +289,12 @@ let tuple_fields vs =
 (** Maps an [undefined] JavaScript value to the [None] case and maps
     the [Some] case using the given mapping parameter. *)
 let option_undefined def =
-  Option (Guard.(var "<root>" = undefined), def)
+  Option (Guard.(var "root" = undefined), def)
 
 (** Maps a [null] JavaScript value to the [None] case and maps the
     [Some] case using the given mapping parameter. *)
 let option_null def =
-  Option (Guard.(var "<root>" = null), def)
+  Option (Guard.(var "root" = null), def)
 
 (** Map a simple JavaScript int enum as a sum type  *)
 let int_enum cases =
@@ -330,7 +330,7 @@ let call_constructor ?(site = "args") sto =
     the rest of the DSL. In particular, you do not need to precise
     them to use [call_method] in conjunction with {!args} and
     {!def_method}. *)
-let call_method ?(site = "args") ?(sto = Var "<this>") name =
+let call_method ?(site = "args") ?(sto = Var "this") name =
   Call_method (sto, name, site)
 
 (** Returns the value at a given JavaScript location. *)

@@ -7,26 +7,167 @@
 (** Back-end for OCaml with methods projected to simple functions over
     Abstract Data Type *)
 
-(* THIS FILE IS A (WORKING) DRAFT *)
-
 open Goji_pprint
+open Goji_messages
 open Goji_ast
 
-let fix_params params =
-  let fake_unit_param = Curry, "()", Nodoc, Value (Void, Var "<fake>") in
-  let params = match params with [] -> [ fake_unit_param ] | p -> p in
-  let rec add_fake_positional acc = function
-    | (Curry | Labeled), _, _, _ as p1 :: tl ->
-      List.rev tl @ acc @ [ p1 ]
-    | Optional, _, _, _ as p :: tl ->
-      add_fake_positional (p :: acc) tl
-    | [] -> List.rev (fake_unit_param :: acc)
-  in add_fake_positional [] (List.rev params)
+(** Ad-hoc compilation environment to track the used of variables in
+    order to emit warnings / errors, produce nicer code, and maybe
+    other stuff in the future. *)
+module Env : sig
+  type t
+  val empty : t
+  val def_ocaml_var : ?used:bool ->  string -> t -> t * document
+  val let_ocaml_var : ?used:bool ->  string -> document -> t -> t * document
+  val use_ocaml_var : string -> t -> document
+  val exists_ocaml_var : string -> t -> bool
+  val def_goji_var : ?used:bool -> ?ro:bool -> ?block:bool -> string -> t -> t * document
+  val let_goji_var : ?used:bool -> ?ro:bool -> ?block:bool -> string -> document -> t -> t * document
+  val use_goji_var : string -> t -> document
+  val exists_goji_var : string -> t -> bool
+  val warn_unused : t -> unit
+  val goji_vars_diff : t -> t -> string list
+  val merge_vars : string list list -> string list
+  val tuple_goji_vars : string list -> t -> document
+  val is_block : string -> t -> bool
+  val is_ro : string -> t -> bool
+end = struct
+  module SM = Map.Make (String)
 
+  type var =
+  | Def of document ref
+  | Let of document * document ref * document ref
+
+  type env_var = (var * int ref * int) SM.t
+  type goji_flags = (bool * bool) SM.t
+
+  type t = env_var * env_var * goji_flags
+
+  let uid = ref 0
+  let uid () = incr uid ; !uid
+
+  let use_var t n vars =
+    try
+      let var, rnb, _ = SM.find n vars in
+      incr rnb ;
+      match !rnb, var with
+      | 1, Def (rv) ->
+	rv := !^n ;
+	document_ref rv
+      | _, Def (rv) ->
+	document_ref rv
+      | 2, Let (v, rlet, rv) ->
+	rlet := format_let_in !^n v empty ;
+	rv := !^n ;
+	document_ref rv
+      | _, Let (_, _, rv) ->
+	document_ref rv
+    with Not_found ->
+      error "undefined %s variable %S" t n
+
+  let exists_var n vars =
+    try
+      ignore (SM.find n vars) ; true
+    with Not_found ->
+      false
+
+  let def_var t ?(used = false) n vars =
+    let r = ref !^"_" in
+    let nenv = SM.add n (Def r, ref 0, uid ()) vars in
+    if used then ignore (use_var t n nenv) ;
+    nenv, document_ref r
+
+  let let_var t ?(used = false) n v vars =
+    let rlet = ref empty and rvar = ref v and rnb = ref 0 in
+    let ilet = document_ref rlet in
+    let nenv = SM.add n (Let (v, rlet, rvar), rnb, uid ()) vars in
+    if used then ignore (incr rnb ; use_var t n nenv) ;
+    nenv, ilet
+
+  let warn_unused (ovars, gvars, gflags) =
+    SM.iter
+      (fun v (_, nb, _) ->
+	if !nb = 0 && v <> "()" then warning "unused OCaml variable %S" v)
+      ovars ;
+    SM.iter
+      (fun v (_, nb, _) ->
+	if !nb = 0 then warning "unused Goji variable %S" v)
+      gvars
+
+  let use_ocaml_var n (ovars, gvars, gflags) =
+    use_var "OCaml" n ovars
+
+  let exists_ocaml_var n (ovars, gvars, gflags) =
+    exists_var n ovars
+      
+  let def_ocaml_var ?(used = false) n (ovars, gvars, gflags) =
+    let ovars, res = def_var "OCaml" ~used n ovars in
+    (ovars, gvars, gflags), res
+
+  let let_ocaml_var ?(used = false) n v (ovars, gvars, gflags) =
+    let ovars, res = let_var "OCaml" n v ovars in
+    (ovars, gvars, gflags), res
+
+  let use_goji_var n (ovars, gvars, gflags) =
+    use_var "Goji" n gvars
+
+  let exists_goji_var n (ovars, gvars, gflags) =
+    exists_var n gvars
+
+  let def_goji_var ?(used = false) ?(ro = true) ?(block = false) n (ovars, gvars, gflags) =
+    (try if fst (SM.find n gflags) then
+	error "trying to redefine read-only Goji variable %S" n
+     with Not_found -> ());
+    let gvars, res = def_var "Goji" ~used n gvars in
+    let gflags = SM.add n (ro, block) gflags in
+    (ovars, gvars, gflags), res
+
+  let let_goji_var ?(used = false) ?(ro = true) ?(block = false) n v (ovars, gvars, gflags) =
+    (try if fst (SM.find n gflags) then
+	error "trying to redefine read-only Goji variable %S" n
+     with Not_found -> ());
+    let gvars, res = let_var "Goji" n v gvars in
+    let gflags = SM.add n (ro, block) gflags in
+    (ovars, gvars, gflags), res
+
+  let is_block n (ovars, gvars, gflags) =
+    snd (SM.find n gflags)
+
+  let is_ro n (ovars, gvars, gflags) =
+    fst (SM.find n gflags)
+
+  let goji_vars_diff (_, gvars1, _) (_, gvars2, _) =
+    SM.fold
+      (fun v (_, _, id1) r ->
+	try
+	  let _, _, id2 = SM.find v gvars1 in
+	  if id1 = id2 then r else v :: r
+	with Not_found -> v :: r)
+      gvars2 []
+
+  let empty = (SM.empty, SM.empty, SM.empty)
+
+  module SS = Set.Make (String)
+    
+  let merge_vars lists = 
+    SS.elements (List.fold_right (List.fold_right SS.add) lists SS.empty)
+      
+  let tuple_goji_vars vars env =
+    format_tuple
+      (List.map
+	 (fun v ->
+	   if exists_goji_var v env then
+	     use_goji_var v env
+	   else
+	     !^"JavaScript.Ops.constant \"undefined\"")
+	 vars)
+end
+
+(** Code emission class *)
 class emitter = object (self)
   inherit Goji_emit_struct.emitter as mommy
 
-  (* common utility methods for interface and definition generation *)
+  (* Utility methods **********************************************************)
 
   method format_type_params tparams =
     let format_param = function
@@ -48,26 +189,6 @@ class emitter = object (self)
     | _ ->
       format_tuple (List.map (fun p -> self # format_value_type p) targs)
       ^^ break 1
-
-  method format_injector_definition name def =
-    format_let
-      (!^("inject_" ^ name) ^^^ !^"v")
-      (self # format_injector_body "v" def)
-
-  method format_extractor_definition name def =
-    format_let
-      (!^("extract_" ^ name) ^^^ !^"root")
-      (self # format_extractor_body def)
-
-  method format_injector_body var def =
-    let def = Goji_dsl.(def @@ Var "res") in
-    format_let_in !^"res'V" !^^"ref (JavaScript.Ops.constant \"undefined\")"
-      (format_sequence
-	 (self # format_injector var def
-	  @ seq_instruction !^"!res'V"))
-
-  method format_extractor_body def =
-    self # format_extractor def
 
   (** @param sa: put parentheses around functional types
       @param st: put parentheses around tuple types *)
@@ -115,7 +236,6 @@ class emitter = object (self)
   (** Constructs the OCaml arrow type from the defs of parameters and
       return value. Does not put surrounding parentheses. *)
   method format_fun_type params ret =
-    let params = fix_params params in
     let format_one (pt, name, doc, def) =
       let pref, def = match pt with
 	| Optional -> !^"?" ^^ !^name ^^ !^":", def
@@ -151,7 +271,6 @@ class emitter = object (self)
       String.blit str 0 res 0 (String.length str) ;
       res
     in
-    let params = fix_params params in
     let doc, example =
       (List.fold_right
 	 (fun param (rd, re) ->
@@ -182,7 +301,485 @@ class emitter = object (self)
       ^^ hardline
       ^^ doc
 
-  (* definition generation entry points *)
+  (* Injection methods ********************************************************)
+
+  method format_injector_definition name def =
+    let env, var = Env.(def_ocaml_var "obj" empty) in
+    let env, body = self # format_injector_body "obj" def env in
+    let res = format_let (!^("inject_" ^ name) ^^^ var) body in
+    Env.warn_unused env ; res
+
+  method format_injector_body var def env =
+    let def = Goji_dsl.(def @@ Var "res") in
+    let env, code = self # format_injector var def env in
+    let body = code @ seq_result (Env.use_goji_var "res" env) in
+    env, format_sequence body
+
+  method format_arguments_injection params env =
+    let format_param (env, prev) (pt, name, _, def) =
+      let def = match pt with
+	| Optional -> Option (True, def)
+        | Curry | Labeled -> def
+      in
+      let env = fst (Env.def_ocaml_var name env) in
+      let env, seq = self # format_injector name def env in
+      env, prev @ seq
+    in
+    List.fold_left format_param (env, []) params
+
+  method format_injector ?(path = []) v def env =
+    match def with
+    | Record fields ->
+      List.fold_left
+        (fun (env, prev) (n, def, doc) ->
+	  let var = "f'" ^ n in
+	  let env, vlet =
+	    let vn = Env.use_ocaml_var v env ^^ !^"." ^^ format_ident (path, n) in
+	    Env.let_ocaml_var var vn env
+	  in
+	  let env, seq = self # format_injector var def env in
+	  (env, prev @ seq_instruction' vlet @ seq))
+	(env, [])
+        fields
+    | Variant cases ->
+      let branches =
+	List.map
+          (fun (n, g, defs, doc) ->
+	    let env, resg = self # format_guard_injector g env in
+	    if defs = [] then
+	      env, resg, !^n
+	    else
+	      let env, code, _, decls =
+		List.fold_right
+		  (fun def (env, code, i, tup) ->
+		    let vn = v ^ "'" ^ string_of_int i in
+		    let env, decl = Env.def_ocaml_var vn env in
+		    let env, resd = self # format_injector vn def env in
+		    (env, code @ resd, succ i, decl :: tup))
+		  defs (env, resg, 0, [])
+	       in env, resg @ code, !^n ^^ !^" " ^^ format_tuple decls)
+	  cases
+      in
+      let nvars =
+	Env.merge_vars
+	  (List.map
+	     (fun (env', _, _) -> Env.goji_vars_diff env env')
+	     branches)
+      in
+      if nvars = [] then
+	env,
+	seq_instruction
+	  (format_match (Env.use_ocaml_var v env)
+	     (List.map
+		(fun (_, code, pat) -> pat, format_sequence code)
+		branches))
+      else
+	let body =
+	  format_match (Env.use_ocaml_var v env)
+	    (List.map
+	       (fun (env, code, pat) ->
+		 let reti = seq_result (Env.tuple_goji_vars nvars env) in
+		 pat, format_sequence (code @ reti))
+	       branches)
+	in
+	let env =
+	  List.fold_left
+	    (* this is a horrid hack, thank me very much if you have to read this *)
+	    (fun env v -> fst (Env.let_goji_var ~used:true v !^v env))
+	    env nvars
+	in
+	env, seq_let_in (format_tuple (List.map (!^) nvars)) body 
+    | Tuple (defs) ->
+      let env, _, decls, code =
+	List.fold_left
+	  (fun (env, i, decls, code) def ->
+	    let var = v ^ "'" ^ string_of_int i in
+	    let env, decl = Env.def_ocaml_var var env in
+	    let env, instrs = self # format_injector var def env in
+	    (env, succ i, decl :: decls, code @ instrs))
+	  (env,0, [], [])
+	  defs
+      in
+      let decls = List.rev decls in
+      env, seq_let_in (format_tuple decls) (Env.use_ocaml_var v env) @ code
+    | Option (g, d) ->
+      let vn = v ^ "'v" in
+      let envd = fst (Env.def_ocaml_var vn env) in
+      let envd, resd = self # format_injector vn d envd in
+      let envg, resg = self # format_guard_injector g env in
+      let nvarsd = Env.goji_vars_diff env envd in
+      let nvarsg = Env.goji_vars_diff env envg in
+      let nvars = Env.merge_vars [ nvarsg ;  nvarsd ] in
+      if nvars = [] then
+	env,
+	seq_instruction
+	  (format_match (Env.use_ocaml_var v env)
+             [ !^("Some " ^ vn), format_sequence resd ;
+               !^"None", format_sequence resg ])
+      else
+	let body =
+	  format_match (Env.use_ocaml_var v env)
+            [ !^("Some " ^ vn),
+	      format_sequence (resd @ seq_result (Env.tuple_goji_vars nvars envd)) ;
+              !^"None",
+	      format_sequence (resg @ seq_result (Env.tuple_goji_vars nvars envg)) ] in
+	let env =
+	  List.fold_left
+	    (* this is a horrid hack, thank me very much if you have to read this *)
+	    (fun env v -> fst (Env.let_goji_var ~used:true v !^v env))
+	    env nvars
+	in
+	env, seq_let_in (format_tuple (List.map (!^) nvars)) body 	  
+    | Value (Void, sto) -> env, []
+    | Value (leaf, sto) ->
+      let env, arg = self # format_leaf_injector v leaf env in
+      self # format_storage_assignment arg sto env
+
+  method format_guard_injector g env =
+    let rec collect = function
+      | Const (sto, c) -> [ (sto, c) ]
+      | Raise _ | True | False | Not _ -> []
+      | And (g1, g2) -> collect g1 @  collect g2
+      | Or (g, _) -> collect g
+    in
+    let env, seq =
+      List.fold_left
+	(fun (env, seq) (sto, c) ->
+	  let env, instrs =
+	    self # format_storage_assignment
+	      (self # format_const c)
+	      sto env
+	  in env, instrs @ seq)
+	(env, [])
+	(collect g)
+    in
+    env, seq
+
+  method format_leaf_injector v leaf env =
+    match leaf with
+    (* simple types *)
+    | Int -> env, format_app !^"JavaScript.Inject.int" [ Env.use_ocaml_var v env ]
+    | String -> env, format_app !^"JavaScript.Inject.string" [ Env.use_ocaml_var v env ]
+    | Bool -> env, format_app !^"JavaScript.Inject.bool" [ Env.use_ocaml_var v env ]
+    | Float -> env, format_app !^"JavaScript.Inject.float" [ Env.use_ocaml_var v env ]
+    | Any -> env, Env.use_ocaml_var v env
+    | Void -> env, empty
+    (* higher order injections *)
+    | Array def ->
+      let local, decl = Env.def_ocaml_var "item" env in
+      env, format_app
+        !^"JavaScript.Inject.array"
+        [ format_fun [ decl ] (snd (self # format_injector_body "item" def local)) ;
+          Env.use_ocaml_var v env ]
+    | List def ->
+      let local, decl = Env.def_ocaml_var "item" env in
+      env, format_app !^"Array.to_list" [
+	format_app
+          !^"JavaScript.Inject.array"
+          [ format_fun [ decl ] (snd (self # format_injector_body "item" def local)) ;
+            Env.use_ocaml_var v env ] ]
+    | Assoc def ->
+      let local, decl = Env.def_ocaml_var "item" env in
+      env, format_app
+        !^"JavaScript.Inject.assoc"
+        [ format_fun [ decl ] (snd (self # format_injector_body "item" def local)) ;
+          Env.use_ocaml_var v env ]
+    (* named types *)
+    | Param _ -> (* TODO: parametric injections *)
+      env, format_app !^"JavaScript.Inject.identity" [ Env.use_ocaml_var v env ]
+    | Abbrv ((_, (path, name)), Default) ->
+      env, format_app (format_ident (path, "inject_" ^ name)) [ Env.use_ocaml_var v env ]
+    | Abbrv (abbrv, Extern (inject, extract)) ->
+      env, format_app (format_ident inject) [ Env.use_ocaml_var v env ]
+    | Abbrv (abbrv, Custom def) ->
+      let local, decl = Env.def_ocaml_var "v" env in
+      env, format_app
+        (format_fun [ decl ] (snd (self # format_injector_body "v" def local)))
+        [ Env.use_ocaml_var v env ]
+    (* functional types *)
+    | Callback (params, ret)
+    | Handler (params, ret, _) ->
+      (* Generates the following pattern:
+	  Ops.wrap_fun
+	   (fun args'0 ... args'n ->
+	     let cbres = v (extract arg_1) ... (extract arg_n) in
+	     inject cbres) *)      
+      let max_arg =
+	let collect = object (self)
+ 	  inherit [int] collect 0 as mom
+	  method! storage = function
+	    | Arg ("args", i) ->
+	      self # store (max (self # current) (i + 1))
+	    | Arg (_, _) | Rest _ -> failwith "error 8845"
+	    | oth -> mom # storage oth
+	end in
+	List.iter (collect # parameter) params ;
+	collect # result
+      in
+      let rec args i env =
+	if i = 0 then
+	  env, []
+	else
+	  let env, decl = Env.def_goji_var ("args'" ^ string_of_int (i - 1)) env in
+	  let env, decls = args (i - 1) env in
+	  env, decl :: decls
+      in
+      let local, args = args max_arg env in
+      let format_param (pt, name, _, def) (env, args) =
+	match pt with
+	| Optional ->
+	  error "unsupported optional argument in callback"
+	| Curry ->
+	  let env, arg = self # format_extractor def env in
+	  env, arg :: args 
+	| Labeled ->
+	  let env, arg = self # format_extractor def env in
+	  let arg = !^"~" ^^ !^name ^^ !^":" ^^ arg in
+	  env, arg :: args
+      in
+      let local, params = List.fold_right format_param params (local, []) in
+      (* do not inject unit results *)
+      let fun_body =
+	match ret with
+	| Value (Void, _) ->
+	  format_app (Env.use_ocaml_var v local) params
+	| _ ->
+	  let call = format_app (Env.use_ocaml_var v local) params in
+	  let local, vlet = Env.let_ocaml_var "cbres" call local in
+	  let _, body = self # format_injector_body "cbres" ret local in
+	  (format_sequence
+	     (seq_instruction' vlet
+	      @ seq_result body))
+      in
+      env,
+      format_app
+	!^"JavaScript.Ops.wrap_fun"
+	[ format_fun (if max_arg = 0 then [ !^" ()" ] else args) fun_body ]
+
+  method format_storage_assignment arg sto env =
+    let rec toplevel sto =
+      match sto with
+      | Global n ->
+	let body = format_app ~wrap:false !^"JavaScript.Ops.set_global" [ !^!n ; arg ] in
+	env, seq_instruction body
+      | Var n ->
+	let env, v = Env.let_goji_var n arg env in
+	env, seq_instruction' v
+      | Arg (cs, n) ->
+	env,
+	seq_instruction (format_app ~wrap:false !^"Goji_internal.set_arg" [ !^(cs ^ "'A") ; int n ; arg ])
+      | Rest cs ->
+	env,
+	seq_instruction (format_app ~wrap:false !^"Goji_internal.push_arg" [ !^(cs ^ "'A") ; arg ])
+      | Field (sto, n) ->
+	let preq, env, blo = nested sto env in
+	env,
+	preq
+	@ (seq_instruction (format_app ~wrap:false !^"JavaScript.Ops.set" [ blo ; !^!n ; arg ]))
+      | Cell (sto, i) ->
+	let preq, env, blo = nested sto env in
+	env,
+	preq 
+        @ (seq_instruction
+	     (format_app ~wrap:false
+		!^"JavaScript.Ops.set_any "
+		[ blo ;
+		  !^"(JavaScript.Ops.of_int" ^^^ !^(string_of_int i) ^^ !^")" ;arg ]))
+    and nested sto env =
+      match sto with
+      | Rest cs ->
+	error "indirect assignment of rest not supported"
+      | Global n ->
+        [], env, format_app !^"Goji_internal.ensure_block_global" [ !^!n ]
+      | Var n ->
+	let env, slet =
+	  if Env.(not (exists_goji_var n env)) then
+	    let env, rlet =
+	      Env.let_goji_var ~block:true n !^"(JavaScript.Ops.obj [| |])" env
+	    in env, seq_instruction' rlet
+	  else if Env.(not (is_ro n env || is_block n env)) then
+	    let env, rlet =
+	      Env.let_goji_var ~block:true n
+		(format_app
+		   !^"Goji_internal.ensure_block_var"
+		   [ Env.use_goji_var n env ])
+		env
+	    in env, seq_instruction' rlet
+	  else env, []
+	in
+	slet, env, Env.use_goji_var n env
+      | Arg (cs, n) ->
+        [], env, format_app !^"Goji_internal.ensure_block_arg" [ !^(cs ^ "'A") ; int n ]
+      | Field (sto, n) ->
+	let preq, env, res = nested sto env in
+        preq, env, format_app !^"Goji_internal.ensure_block_field" [ res ; !^!n ]
+      | Cell (sto, i) ->
+	let preq, env, res = nested sto env in
+        preq, env, format_app !^"Goji_internal.ensure_block_cell" [ res ; int i ]
+    in toplevel sto
+
+  (* Extraction methods *******************************************************)
+
+  method format_extractor_definition name def =
+    let env, decl = Env.(def_goji_var "root" empty) in
+    let env, body = self # format_extractor_body def env in
+    Env.warn_unused env ;
+    format_let (!^("extract_" ^ name) ^^^ decl) body
+
+  method format_extractor_body def env =
+    self # format_extractor def env
+
+  method format_result_extractor def env =
+    match def with
+    | Value (Void, _) -> env, []
+    | _ -> 
+      let env, res = self # format_extractor def env in
+      env, seq_result res
+
+  (** produces code that extracts an OCaml value of structure [def]
+      from the context *)
+  method format_extractor def env =
+    match def with
+    | Record fields ->
+      let env, fields =
+        List.fold_right
+          (fun (n, def, doc) (env, res) ->
+	    let env, body = self # format_extractor def env in
+	    env, (!^n, body) :: res)
+          fields (env, [])
+      in
+      env, format_record fields
+    | Variant cases ->
+      List.fold_right
+        (fun (n, g, defs, doc) (env, alt) ->
+	  let env, args =
+            if defs = [] then
+	      env, !^n
+	    else
+	      let env, args =
+		List.fold_right
+		  (fun def (env, rs) ->
+		    let env, r = self # format_extractor def env in
+		    env, r :: rs)
+		  defs
+		  (env, [])
+	      in
+	      env, !^n ^^ (nest 2 (break 1 ^^ format_tuple args))
+	  in
+          env, format_if (self # format_guard g env) args alt)
+        cases
+        (env, !^("failwith \"unable to extract\"" (* FIXME: type name *)))
+    | Tuple (defs) ->
+      let env, comps =
+	List.fold_right
+	  (fun def (env, rs) ->
+	    let env, r = self # format_extractor def env in
+	    env, r :: rs)
+	  defs
+	  (env, [])
+      in
+      env, format_tuple comps
+    | Option (g, d) ->
+      let env, arg = self # format_extractor d env in
+      env,
+      format_if
+	(self # format_guard g env)
+        !^"None"
+	(format_app !^"Some "[ arg ])
+    | Value (Void, _) -> env, !^"()"
+    | Value (leaf, sto) ->
+      let arg = self # format_storage_access sto env in
+      env, self # format_leaf_extractor leaf arg env
+
+  method format_leaf_extractor leaf arg env =
+    match leaf with
+    | Int -> format_app !^"JavaScript.Extract.int" [ arg ]
+    | String -> format_app !^"JavaScript.Extract.string" [ arg ]
+    | Bool -> format_app !^"JavaScript.Extract.bool" [ arg ]
+    | Float -> format_app !^"JavaScript.Extract.float" [ arg ]
+    | Any -> arg
+    | Void -> assert false
+    | Array def ->
+      let local, decl = Env.def_goji_var "root" env in
+      format_app
+        !^"JavaScript.Extract.array"
+        [ format_fun [ decl ] (snd (self # format_extractor def local)) ;
+	  arg ]
+    | List def ->
+      let local, decl = Env.def_goji_var "root" env in
+      format_app
+	!^"Array.to_list"
+	[ format_app
+            !^"JavaScript.Extract.array"
+            [ format_fun [ decl ] (snd (self # format_extractor def local)) ;
+	      arg ] ]
+    | Assoc def ->
+      let local, decl = Env.def_goji_var "root" env in
+      format_app
+        !^"JavaScript.Extract.assoc"
+        [ format_fun [ decl ] (snd (self # format_extractor def local)) ;
+	  arg ]
+    | Param _ -> (* FIXME: check all this magic ? *)
+      format_app
+        !^"JavaScript.Extract.identity"
+        [ arg ]
+    | Abbrv ((_, (path, name)), Default) ->
+      format_app (format_ident (path, "extract_" ^ name)) [ arg ]
+    (* FIXME: add injector params *)
+    | Abbrv (abbrv, Extern (inject, extract)) ->
+      format_app (format_ident extract) [ arg ]
+    | Callback _ | Handler _ -> !^"(assert false)"
+    | Abbrv (abbrv, Custom def) -> !^"(assert false)"
+
+
+  method format_storage_access sto env =
+    match sto with
+    | Global n -> format_app !^"JavaScript.Ops.global" [ !^!n ]
+    | Var n -> Env.use_goji_var n env
+    | Arg ("args", n) -> Env.use_goji_var ("args'" ^ string_of_int n) env
+    | Arg _ -> failwith "error 1458"
+    | Rest _ -> failwith "error 1459"
+    | Field (sto, n) ->
+      format_app
+	!^"JavaScript.Ops.get"
+	[ self # format_storage_access sto env ; !^!n ]
+    | Cell (sto, i) ->
+      format_app
+	!^"JavaScript.Ops.get_any "
+	[ self # format_storage_access sto env ;
+	  !^"JavaScript.Ops.of_int " ^^ int i ]
+
+  (** Constructs a JavaScript value from a constant litteral *)
+  method format_const = function
+    | Const_int i -> !^(Printf.sprintf "(JavaScript.Ops.of_int %d)" i)
+    | Const_float f -> !^(Printf.sprintf "(JavaScript.Ops.of_float %g)" f)
+    | Const_bool b -> !^(Printf.sprintf "(JavaScript.Ops.of_bool %b)" b)
+    | Const_string s -> !^(Printf.sprintf "(JavaScript.Ops.of_string %S)" s)
+    | Const_undefined -> !^(Printf.sprintf "(JavaScript.Ops.constant %S)" "undefined")
+    | Const_null -> !^(Printf.sprintf "(JavaScript.Ops.constant %S)" "null")
+
+  (** Compiles a guard to an OCaml boolean expression *)
+  method format_guard guard env =
+    match guard with
+    | True -> !^"true"
+    | False -> !^"false"
+    | Raise p ->
+      format_app !^"raise" [ format_ident p ]
+    | Not g ->
+      format_app !^"not"
+        [ self # format_guard g env ]
+    | And (g1, g2) ->
+      format_app !^"(&&)"
+        [ self # format_guard g1 env ; self # format_guard g2 env ]
+    | Or (g1, g2) ->
+      format_app !^"(||)"
+        [ self # format_guard g1 env ; self # format_guard g2 env ]
+    | Const (sto, c) ->
+      format_app !^"JavaScript.Ops.equals"
+        [ self # format_storage_access sto env ;
+          self # format_const c ]
+
+  (* definition generation entry points ***************************************)
 
   method format_type_definition tparams name type_mapping doc =
     [ format_comment true (self # format_doc doc)
@@ -221,21 +818,21 @@ class emitter = object (self)
            ^^ self # format_extractor_definition name def)
       | Gen_sym ->
         format_hidden
-          (self # format_injector_definition name (Value (String, Var "<root>"))
+          (self # format_injector_definition name (Value (String, Var "root"))
            ^^ hardline
-           ^^ self # format_extractor_definition name  (Value (String, Var "<root>")))
+           ^^ self # format_extractor_definition name  (Value (String, Var "root")))
       | Gen_id ->
         format_hidden
-          (self # format_injector_definition name (Value (Int, Var "<root>"))
+          (self # format_injector_definition name (Value (Int, Var "root"))
            ^^ hardline
-           ^^ self # format_extractor_definition name  (Value (Int, Var "<root>")))
+           ^^ self # format_extractor_definition name  (Value (Int, Var "root")))
       | Format -> failwith "format not implemented" ]
 
   method format_method_definition (_, (tpath, tname) as abbrv) name params body ret doc =
     let params =
       [ (Curry, "this",
          Doc ("The [" ^ string_of_ident (tpath, tname) ^ "] instance"),
-         Value (Abbrv (abbrv, Default), Var "<this>"))] @ params
+         Value (Abbrv (abbrv, Default), Var "this"))] @ params
     in
     self # format_function_definition name params body ret doc
 
@@ -248,366 +845,102 @@ class emitter = object (self)
       in
       group (c ^^ format_annot !^name (self # format_value_type def))
     in
-    let params = fix_params params in
+    let body =
+      let call_sites = self # format_call_sites params body in
+      let env, params = self # format_arguments_injection params Env.empty in
+      let env, body = self # format_body body env in
+      let env, ret =
+	match ret with
+	| Value (Void, _) when not Env.(exists_goji_var "result" env)->
+	  env, []
+	| Value (Void, _) ->
+	  env, seq_result (format_app !^"ignore" [ Env.use_goji_var "result" env ])
+	| _ ->
+	  self # format_result_extractor Goji_dsl.(ret @@ Var "result") env
+      in
+      Env.warn_unused env ;
+      format_sequence (call_sites @ params @ body @ ret)
+    in
     [ format_comment true (self # format_function_doc doc name params)
-      ^^ format_let
-          (format_fun_pat
-	     !^name
-	     ~annot:(self # format_value_type ret)
-	     (List.map format_param params))
-          (format_sequence
-	     (self # format_call_sites params body
-	      @ self # format_temp_vars params body
-              @ self # format_arguments_injection params
-	      @ seq_let_in !^"result" (self # format_body body)
-              @ seq_instruction (self # format_extractor Goji_dsl.(ret @@ Var "<result>")))) ]
+      ^^ (format_let
+            (format_fun_pat !^name  ~annot:(self # format_value_type ret)
+	       (List.map format_param params))
+	    body) ]
 
   method format_inherits_definition name t1 t2 doc =
     let params = [ Curry, "this", Nodoc,
                    Value (Abbrv (t1, Default), Var "temp") ] in
-    let ret = Value (Abbrv (t2, Default), Var "<root>") in
+    let ret = Value (Abbrv (t2, Default), Var "root") in
     let body = Access (Var "temp") in
     self # format_function_definition name params body ret doc
 
-  method format_arguments_injection params =
-    let format_param (pt, name, _, def) =
-      let def = match pt with
-	| Optional -> Goji_dsl.option_undefined def
-        | Curry | Labeled -> def
-      in
-      self # format_injector name def
-    in
-    List.flatten (List.map format_param params)
-
-  method format_body = function
-    | Nop -> !^"()"
+  method format_body body env =
+    match body with
+    | Nop -> env, []
     | Call_method (rsto, name, cs) ->
-      format_app
-	!^"JavaScript.Ops.call_method"
-	[ self # format_storage_access rsto ; !^!name ;
-	  format_app !^"Goji_internal.build_args" [ !^(cs ^ "'A") ] ]
+      let res =
+	format_app
+	  !^"JavaScript.Ops.call_method"
+	  [ self # format_storage_access rsto env ; !^!name ;
+	    format_app !^"Goji_internal.build_args" [ !^(cs ^ "'A") ] ]
+      in
+      let env, res = Env.let_goji_var "result" ~ro:false res env in
+      env, seq_instruction' res
     | Call (fsto, cs) ->
-      format_app
-	!^"JavaScript.Ops.call"
-	[ self # format_storage_access fsto ;
-	  format_app !^"Goji_internal.build_args" [ !^(cs ^ "'A") ] ]
+      let res =
+	format_app
+	  !^"JavaScript.Ops.call"
+	  [ self # format_storage_access fsto env ;
+	    format_app !^"Goji_internal.build_args" [ !^(cs ^ "'A") ] ]
+      in
+      let env, res = Env.let_goji_var "result" ~ro:false res env in
+      env, seq_instruction' res
     | New (csto, cs) ->
-      format_app
-	!^"JavaScript.Ops.call_constructor"
-	[ self # format_storage_access csto ;
-	  format_app !^"Goji_internal.build_args" [ !^(cs ^ "'A") ] ]
+      let res =
+	format_app
+	  !^"JavaScript.Ops.call_constructor"
+	  [ self # format_storage_access csto env ;
+	    format_app !^"Goji_internal.build_args" [ !^(cs ^ "'A") ] ]
+      in
+      let env, res = Env.let_goji_var "result" ~ro:false res env in
+      env, seq_instruction' res
     | Access sto ->
-      self # format_storage_access sto
+      let res = self # format_storage_access sto env in
+      let env, res = Env.let_goji_var "result" ~ro:false res env in
+      env, seq_instruction' res
     | Inject_constants asses ->
-      List.fold_left
-	(fun r (c, sto) ->
-	  r ^^ format_let_in !^"v" (self # format_const c)
-	         (format_sequence (self # format_storage_assignment !^"v" sto)))
-	empty asses
+      List.fold_right
+	(fun (c, sto) (env, r) ->
+	  let c = (self # format_const c) in
+	  let env, ass = self # format_storage_assignment c sto env in
+	  env, ass @ r)
+	asses (env, [])
     | Inject _ -> assert false
     | Abs (n, v, b) ->
-      format_let_in
-	!^n
-	(self # format_body v)
-	(self # format_body b)
-    | Test (cond, bt, bf) ->
-      format_if
-	(self # format_guard cond)
-	(self # format_body bt)
-	(self # format_body bf)
-
-  method format_storage_access = function
-    | Global n -> format_app !^"JavaScript.Ops.global" [ !^!n ]
-    | Var n when n.[0] = '<' -> !^(String.sub n 1 (String.length n - 2))
-    | Var n -> !^("!" ^ n ^ "'V")
-    | Arg ("args", n) -> !^"args'" ^^ int n
-    | Arg _ -> failwith "error 1458"
-    | Rest _ -> failwith "error 1459"
-    | Field (sto, n) ->
-      format_app
-	!^"JavaScript.Ops.get"
-	[ self # format_storage_access sto ; !^!n ]
-    | Cell (sto, i) ->
-      format_app
-	!^"JavaScript.Ops.get_any "
-	[ self # format_storage_access sto ;
-	  !^"JavaScript.Ops.of_int " ^^ int i ]
-
-  method format_storage_assignment v sto =
-    let rec toplevel sto =
-      match sto with
-      | Global n ->
-	seq_instruction (format_app !^"JavaScript.Ops.set_global" [ !^!n ; v ])
-      | Var "<this>" ->
-	seq_let_in !^"this" v
-      | Var n when n.[0] = '<' ->
-	seq_instruction empty
-      (*      | Var n when n.[0] = '<' -> format_let_in !^(String.sub n 1 (String.length n - 2)) v empty *)
-      | Var n ->
-	seq_instruction (format_ass !^(n ^ "'V") v)
-      | Arg (cs, n) ->
-	seq_instruction (format_app !^"Goji_internal.set_arg"
-			   [ !^(cs ^ "'A") ; int n ; v ])
-      | Rest cs ->
-	seq_instruction (format_app !^"Goji_internal.push_arg"
-			   [ !^(cs ^ "'A") ; v ])
-      | Field (sto, n) ->
-	seq_instruction (format_app
-			   !^"JavaScript.Ops.set"
-			   [ nested sto ; !^!n ; v ])
-      | Cell (sto, i) ->
-        seq_instruction
-	  (format_app
-	     !^"JavaScript.Ops.set_any "
-	     [ nested sto ;
-	       !^"(JavaScript.Ops.of_int" ^^^ !^(string_of_int i) ^^ !^")" ; v ])
-    and nested sto =
-      match sto with
-      | Rest cs -> failwith "error 4679"
-      | Global n ->
-        format_app !^"Goji_internal.ensure_block_global" [ !^!n ]
-      | Var n when n.[0] = '<' ->
-        !^(String.sub n 1 (String.length n - 2))
-      | Var n ->
-        format_app !^"Goji_internal.ensure_block_var" [ !^(n ^ "'V") ]
-      | Arg (cs, n) ->
-        format_app !^"Goji_internal.ensure_block_arg" [ !^(cs ^ "'A") ; int n ]
-      | Field (sto, n) ->
-        format_app !^"Goji_internal.ensure_block_field" [ nested sto ; !^!n ]
-      | Cell (sto, i) ->
-        format_app !^"Goji_internal.ensure_block_cell" [ nested sto ; int i ]
-    in toplevel sto
-
-  (** Constructs a JavaScript value from a constant litteral *)
-  method format_const = function
-    | Const_int i -> !^(Printf.sprintf "(JavaScript.Ops.of_int %d)" i)
-    | Const_float f -> !^(Printf.sprintf "(JavaScript.Ops.of_float %g)" f)
-    | Const_bool b -> !^(Printf.sprintf "(JavaScript.Ops.of_bool %b)" b)
-    | Const_string s -> !^(Printf.sprintf "(JavaScript.Ops.of_string %S)" s)
-    | Const_undefined -> !^(Printf.sprintf "(JavaScript.Ops.constant %S)" "undefined")
-    | Const_null -> !^(Printf.sprintf "(JavaScript.Ops.constant %S)" "null")
-
-  (** Compiles a guard to an OCaml boolean expression *)
-  method format_guard = function
-    | True -> !^"true"
-    | False -> !^"false"
-    | Raise p ->
-      format_app !^"raise" [ format_ident p ]
-    | Not g ->
-      format_app !^"not"
-        [ self # format_guard g ]
-    | And (g1, g2) ->
-      format_app !^"(&&)"
-        [ self # format_guard g1 ; self # format_guard g2 ]
-    | Or (g1, g2) ->
-      format_app !^"(||)"
-        [ self # format_guard g1 ; self # format_guard g2 ]
-    | Const (sto, c) ->
-      format_app !^"JavaScript.Ops.equals"
-        [ self # format_storage_access sto ;
-          self # format_const c ]
-
-  (** produces code that injects the OCaml variable [v] of structure
-      [def] in the context *)
-  method format_injector ?(path = []) v def =
-    match def with
-    | Record fields ->
-      List.flatten
-        (List.map
-           (fun (n, def, doc) ->
-              seq_let_in
-                !^("f'" ^ n)
-                (!^v ^^ !^"." ^^ format_ident (path, n))
-              @ self # format_injector ("f'" ^ n) def)
-           fields)
-    | Variant cases ->
-      seq_instruction
-	(format_match !^v
-	   (List.map
-              (fun (n, g, defs, doc) ->
-		if defs = [] then
-		  !^n, empty (* FIXME: THIS SUCKS !*)
-		else
-		  (!^n ^^ !^" "
-		   ^^ format_tuple (List.mapi (fun i _ -> !^("vc'" ^ string_of_int i)) defs),
-		   format_sequence
-		     (List.flatten
-			(List.mapi
-			   (fun i def ->
-			     self # format_injector ("vc'" ^ string_of_int i) def)
-			   defs))))
-	      cases))
-    | Tuple (defs) ->
-      seq_instruction
-        (let vars = List.mapi (fun i def -> ("v'" ^ string_of_int i, def)) defs in
-         let seq =
-           seq_let_in (format_tuple (List.map (fun (v, _) -> !^v) vars)) !^v
-           @ List.flatten (List.map (fun (v, def) -> self # format_injector v def) vars)
-         in !^"begin" ^^ nest 2 (hardline ^^ format_sequence seq) ^^ hardline ^^ !^"end")
-    | Option (g, d) ->
-      seq_instruction
-	(format_match !^v
-           [ !^"Some v", format_sequence (self # format_injector "v" Goji_dsl.(d)) ;
-             !^"None", self # format_guard_injector g ])
-    | Value (leaf, sto) ->
-      self # format_storage_assignment
-        (self # format_leaf_injector v leaf)
-        sto
-
-  method format_guard_injector g =
-    let rec collect = function
-      | Const (sto, c) -> [ (sto, c) ]
-      | Not _ -> []
-      | And (g1, g2) -> collect g1 @  collect g2
-      | Or (g, _) -> collect g
-      | Raise _ | True | False -> []
-    in
-    let asses = collect g in
-    format_sequence
-      (List.flatten
-	 (List.map (fun (sto, c) ->
-	   self # format_storage_assignment
-	     (self # format_const c)
-	     sto)
-	    asses))
-
-  method format_leaf_injector v leaf =
-    match leaf with
-    | Int -> format_app !^"JavaScript.Inject.int" [ !^v ]
-    | String -> format_app !^"JavaScript.Inject.string" [ !^v ]
-    | Bool -> format_app !^"JavaScript.Inject.bool" [ !^v ]
-    | Float -> format_app !^"JavaScript.Inject.float" [ !^v ]
-    | Any -> !^v
-    | Void ->
-      !^("(ignore " ^ v ^ " ; JavaScript.Ops.constant \"undefined\")")
-    | Array def ->
-      format_app
-        !^"JavaScript.Inject.array"
-        [ group (!^^"(fun v ->" ^^ (nest 2 (break 1 ^^ self # format_injector_body "v" def)) ^^ !^")") ;
-          !^v ]
-    | List def -> format_app !^"Array.to_list" [ self # format_leaf_injector v (Array def) ]
-    | Assoc def ->
-      format_app
-        !^"JavaScript.Inject.assoc"
-        [ group (!^^"(fun v ->" ^^ (nest 2 (break 1 ^^ self # format_injector_body "v" def)) ^^ !^")") ;
-          !^v ]
-    | Param _ -> (* FIXME: check all this magic ? *)
-      format_app
-        !^"JavaScript.Inject.identity"
-        [ !^v ]
-    | Abbrv ((_, (path, name)), Default) ->
-      format_app (format_ident (path, "inject_" ^ name)) [ !^v ]
-    (* FIXME: add injector params *)
-    | Abbrv (abbrv, Extern (inject, extract)) ->
-      format_app (format_ident inject) [ !^v ]
-    | Callback (params, ret)
-    | Handler (params, ret, _) ->
-      (* Generates the following pattern:
-	  Ops.wrap_fun
-	   (fun args'0 ... args'n ->
-	     let cbres = v (extract arg_1) ... (extract arg_n) in
-	     inject cbres) *)      
-      let max_arg =
-	let collect = object (self)
- 	  inherit [int] collect 0 as mom
-	  method! storage = function
-	    | Arg ("args", i) ->
-	      self # store (max (self # current) (i + 1))
-	    | Arg (_, _) | Rest _ -> failwith "error 8845"
-	    | oth -> mom # storage oth
-	end in
-	List.iter (collect # parameter) params ;
-	collect # result
-      in
-      let body =
-	let format_arg (pt, name, _, def) =
-	  match pt with
-	  | Optional -> failwith "error 1887"
-	  | Curry -> self # format_extractor def
-	  | Labeled -> !^"~" ^^ !^name ^^ !^":" ^^ self # format_extractor def
+      let envi, resi = self # format_body v env in
+      let nvars = Env.goji_vars_diff env envi in
+      if nvars <> [] then
+	let ndecls = List.map (function "result" -> n | o -> o) nvars in
+	let reti = format_tuple (List.map (fun v -> Env.use_goji_var n envi) nvars) in
+	let resi = resi @ seq_instruction reti in
+	let env =
+	  List.fold_left
+	  (* this is a horrid hack, thank me very much if you have to read this *)
+	    (fun env v -> fst (Env.let_goji_var ~used:true ~ro:false v !^v env))
+	    env ndecls
 	in
-	format_let_in !^"cbres"
-	  (format_app !^v
-	     (if params = [] then [ !^"()" ]
-	      else List.map format_arg params))
-	  (self # format_injector_body "cbres" ret)
-      in
-      format_app !^"JavaScript.Ops.wrap_fun"
-	[ group (!^"(fun"
-		 ^^ (if max_arg = 0 then
-		       !^" () ->"
-		     else
-		       let rec params i =
-			 if i = 0 then empty
-			 else params (i - 1) ^^ !^" args'" ^^ int (i - 1)
-		       in params max_arg ^^ !^" ->")
-		 ^^ group (nest 2 (break 1 ^^ body))
-		 ^^ !^")") ]
-    | Abbrv (abbrv, Custom def) -> !^"(assert false)"
-
-  (** produces code that extracts an OCaml value of structure [def]
-      from the context *)
-  method format_extractor def =
-    match def with
-    | Record fields ->
-      format_record
-        (List.map
-           (fun (n, def, doc) -> !^n, self # format_extractor def)
-           fields)
-    | Variant cases ->
-      List.fold_right
-        (fun (n, g, defs, doc) alt ->
-           format_if
-             (self # format_guard g)
-             (if defs = [] then
-		 !^n
-	      else
-		 !^n ^^ (nest 2 (break 1
-				 ^^ format_tuple
-				   (List.map (self # format_extractor) defs))))
-             alt)
-        cases
-        !^("failwith \"unable to extract\"" (* FIXME: type name *))
-    | Tuple (defs) -> format_tuple (List.map (self # format_extractor) defs)
-    | Option (g, d) ->
-      format_if
-        (self # format_guard g)
-        !^"None"
-        (format_app !^"Some "[ self # format_extractor d ])
-    | Value (leaf, sto) ->
-      self # format_leaf_extractor leaf
-        (self # format_storage_access sto)
-
-  method format_leaf_extractor leaf sto =
-    match leaf with
-    | Int -> format_app !^"JavaScript.Extract.int" [ sto ]
-    | String -> format_app !^"JavaScript.Extract.string" [ sto ]
-    | Bool -> format_app !^"JavaScript.Extract.bool" [ sto ]
-    | Float -> format_app !^"JavaScript.Extract.float" [ sto ]
-    | Any -> sto
-    | Void -> format_app !^"ignore" [ sto ]
-    | Array def ->
-      format_app
-        !^"JavaScript.Extract.array"
-        [ group (!^^"(fun root ->" ^^ (nest 2 (break 1 ^^ self # format_extractor def)) ^^ !^")") ;
-          sto ]
-    | List def -> format_app !^"Array.to_list" [ self # format_leaf_extractor (Array def) sto ]
-    | Assoc def ->
-      format_app
-        !^"JavaScript.Extract.assoc"
-        [ group (!^^"(fun root ->" ^^ (nest 2 (break 1 ^^ self # format_extractor def)) ^^ !^")") ;
-          sto ]
-    | Param _ -> (* FIXME: check all this magic ? *)
-      format_app
-        !^"JavaScript.Extract.identity"
-        [ sto ]
-    | Abbrv ((_, (path, name)), Default) ->
-      format_app (format_ident (path, "extract_" ^ name)) [ sto ]
-    (* FIXME: add injector params *)
-    | Abbrv (abbrv, Extern (inject, extract)) ->
-      format_app (format_ident extract) [ sto ]
-    | Callback _ | Handler _ -> !^"(assert false)"
-    | Abbrv (abbrv, Custom def) -> !^"(assert false)"
+	let envb, resb =  self # format_body b env in
+	let decls = List.map (!^) ndecls in
+	envb, seq_let_in (format_tuple decls) (format_sequence resi) @ resb
+      else
+	let envb, resb =  self # format_body b env in
+	envb, resi @ resb
+    | Test (cond, bt, bf) ->
+      assert false
+(*      format_if
+	(self # format_guard cond)
+	(self # format_body bt env)
+	(self # format_body bf env) *)
 
   method format_call_sites params body =
     let rec collect = function
@@ -635,33 +968,12 @@ class emitter = object (self)
               (format_app !^"Goji_internal.alloc_args" [ int (size n) ]))
 	 (collect body))
 
-  method format_temp_vars params body =
-    let vars =
-      let module SS = Set.Make (String) in
-      let collect = object (self)
-	inherit [SS.t] collect SS.empty as mom
-	method! storage = function
-	  | Var n when n.[0] <> '<' ->
-	    self # store (SS.add n (self # current))
-	  | oth -> mom # storage oth
-      end in
-      collect # body body ;
-      List.iter (collect # parameter) params ;
-      SS.elements (collect # result)
-    in
-    List.flatten
-      (List.map
-	 (fun n ->
-	    seq_let_in !^^(n ^ "'V")
-	      !^^"ref JavaScript.Ops.undefined")
-	 vars)
-
   (* interface generation entry points *)
 
   method format_type_interface tparams name type_mapping doc =
-    let abbrv = (List.map (fun (_, n) -> Value (Param n, Var "<root>")) tparams, ([], name)) in
-    let abbrv = Value (Abbrv (abbrv, Default), Var "<root>") in
-    let any = Value (Any, Var "<root>") in
+    let abbrv = (List.map (fun (_, n) -> Value (Param n, Var "root")) tparams, ([], name)) in
+    let abbrv = Value (Abbrv (abbrv, Default), Var "root") in
+    let any = Value (Any, Var "root") in
     [ 
       format_comment true (self # format_doc doc)
       ^^ group
@@ -684,7 +996,7 @@ class emitter = object (self)
         ^^ format_val
 	    !^("make_" ^ name)
 	    (self # format_fun_type
-	       [ Curry, "_", Nodoc, Value (Void, Var "<root>") ]
+	       [ Curry, "_", Nodoc, Value (Void, Var "root") ]
 	       abbrv)
       | Format -> assert false
     ] @ [
@@ -701,12 +1013,11 @@ class emitter = object (self)
     let params =
       [ (Curry, "this",
          Doc ("The [" ^ string_of_ident (tpath, tname) ^ "] instance"),
-         Value (Abbrv (abbrv, Default), Var "<this>"))] @ params
+         Value (Abbrv (abbrv, Default), Var "this"))] @ params
     in
     self # format_function_interface name params ret doc
 
   method format_function_interface name params ret doc =
-    let params = fix_params params in
     [ format_comment true (self # format_function_doc doc name params)
       ^^ format_val
   	  !^name
@@ -714,8 +1025,8 @@ class emitter = object (self)
 
   method format_inherits_interface name t1 t2 doc =
     let params = [ Curry, "this", Nodoc,
-                   Value (Abbrv (t1, Default), Var "temp") ] in
-    let ret = Value (Abbrv (t2, Default), Var "<root>") in
+                   Value (Abbrv (t1, Default), Var "this") ] in
+    let ret = Value (Abbrv (t2, Default), Var "root") in
     [ format_comment true (self # format_function_doc doc name params)
       ^^ format_val !^name (self # format_fun_type params ret) ]
 

@@ -9,7 +9,7 @@ OCAMLFIND=OCAMLPATH=. ocamlfind
 PACKAGES=dynlink,str,unix,pprint,cmdliner,goji_lib,findlib
 
 CMXS= goji_pprint.cmx goji_emit_struct.cmx goji_emit_adt.cmx \
-      goji_generate.cmx goji_jslink.cmx goji_main.cmx
+      goji_check_and_fix.cmx goji_generate.cmx goji_jslink.cmx goji_main.cmx
 
 goji: $(CMXS) goji_lib
 	$(OCAMLFIND) ocamlopt -package $(PACKAGES) $(CMXS) -linkpkg -linkall -o $@

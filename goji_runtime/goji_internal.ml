@@ -31,11 +31,9 @@ let ensure_block_global n =
   else v
 
 let ensure_block_var res =
-  let v = !res in
-  if Ops.equals (Ops.constant "undefined") v then
-    let b = Ops.obj [| |] in
-    res := b ; b
-  else v
+  if Ops.equals (Ops.constant "undefined") res then
+    Ops.obj [| |]
+  else res
 
 let ensure_block_arg args idx =
   let v = args.args.(idx) in

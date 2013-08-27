@@ -153,7 +153,7 @@ let grab_javascript_sources base_dir package =
   Sys.chdir prev_wd
 
 (** Main entry point of the [generate] command *)
-let main base_dir fix_case event_backend packages  =
+let main base_dir fix_case reorder_params event_backend packages  =
   List.iter
     (fun fn ->
       let open Dynlink in
@@ -162,6 +162,9 @@ let main base_dir fix_case event_backend packages  =
     packages ;
   if Hashtbl.length Goji_registry.package_store = 0 then
     Goji_messages.warning "empty package store, nothing to generate !" ;
+  let open Goji_check_and_fix in
+  check_params ~reorder_params () ;
+  check_names ~fix_case () ;
   Goji_registry.iter_packages
     (fun package ->
       let package_base_dir = make_package_dir base_dir package in
