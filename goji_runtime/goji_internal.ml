@@ -1,12 +1,115 @@
-open JavaScript
+(** Types and operations used by generated code *)
 
-type arg_block = {
-  args : any array ;
-  mutable rest : any list ; 
-}
+(* Kernel of JavaScript operations *******************************************)
+
+type any
+
+external js_obj : (string * any) array -> any = "caml_js_object"
+
+external js_of_bool : bool -> any = "caml_js_from_bool"
+
+external js_to_bool : any -> bool = "caml_js_to_bool"
+
+external js_of_string : string -> any = "caml_js_from_string"
+
+external js_to_string : any -> string = "caml_js_to_string"
+
+external js_of_float : float -> any = "caml_js_from_float"
+
+external js_to_float : any -> float = "caml_js_to_float"
+
+external js_of_array : any array -> any = "caml_js_from_array"
+
+external js_to_array : any -> any array = "caml_js_to_array"
+
+external js_magic : 'a -> 'b = "%identity"
+
+external js_of_int : int -> any = "%identity"
+
+external js_to_int : any -> int = "%identity"
+
+external js_get_any : any -> any -> any = "caml_js_get"
+
+external js_set_any : any -> any -> any -> unit = "caml_js_set"
+
+let js_get : any -> string -> any = fun o f -> js_get_any o (js_of_string f)
+
+let js_set : any -> string -> any -> unit = fun o f v -> js_set_any o (js_of_string f) v
+
+external js_symbol : string -> any = "caml_js_var"
+
+let js_global : string -> any = fun n -> js_get (js_symbol "window") n
+
+let js_set_global : string -> any -> unit = fun n v -> js_set (js_symbol "window") n v
+
+external js_constant : string -> any = "caml_js_const"
+
+external js_call : any -> any array -> any = "caml_js_fun_call"
+
+external js_call_constructor : any -> any array -> any = "caml_js_new"
+
+external js_call_method : any -> string -> any array -> any = "caml_js_meth_call"
+
+let js_call_global : string -> any array -> any = fun s a -> js_call (js_symbol s) a
+
+external js_equals : any -> any -> bool = "caml_js_equals"
+
+external js_wrap_fun : ('a -> 'b) -> any = "caml_js_wrap_callback"
+
+let js_undefined = js_constant "undefined"
+
+let js_null = js_constant "null"
+
+(* Conversions from OCaml to JavaScript *************************************)
+
+let inject_identity (i : 'a) : any = js_magic i
+
+let inject_int (i : int) : any = js_magic i
+
+let inject_unit (i : unit) : any = js_magic ()
+
+let inject_float (i : float) : any = js_magic i
+
+let inject_string (i : string) : any = js_of_string i
+
+let inject_bool (i : bool) : any = js_of_bool i
+
+let inject_array (inject : 'a -> any) (a : 'a array) : any =
+  js_magic (js_of_array (Array.map inject a))
+
+let inject_assoc (inject : 'a -> any) (a : (_ * 'a) list) : any =
+  let obj = js_obj [| |] in
+  List.iter (fun (n, v) -> js_set obj n (inject v)) a ;
+  obj
+
+(* Conversions from JavaScript to OCaml *************************************)
+
+let extract_identity (i : any) : 'a = js_magic i
+
+let extract_int (i : any) : int = js_magic i
+
+let extract_unit (i : any) : unit = js_magic ()
+
+let extract_float (i : any) : float = js_magic i
+
+let extract_string (i : any) : string = js_to_string i
+
+let extract_native_string (s : any) : string = js_magic s
+
+let extract_bool (i : any) : bool = js_to_bool i
+
+let extract_array (extract : any -> 'a) (a : any) : 'a array =
+  (Array.map extract (js_to_array (js_magic a)))
+
+let extract_assoc (extract : any -> 'a) (a : any) : (_ * 'a) list =
+  failwith "Goji_internal.extract_assoc not implemented"
+
+(* Arguments *****************************************************************)
+
+type arg_block = { args : any array ; mutable rest : any list ; }
 
 let alloc_args nb =
-  { args = Array.make nb (Ops.constant "undefined") ;
+  { args = Array.make nb (js_constant "undefined") ;
     rest = [] }
 
 let push_arg args arg =
@@ -16,42 +119,40 @@ let set_arg args idx arg =
   args.args.(idx) <- arg
 
 let build_args args =
-  if args.rest = [] then
-    args.args
-  else
-    Array.concat
-      [ args.args ;
-        Array.of_list (List.rev args.rest) ]
+  if args.rest = [] then args.args
+  else Array.concat [ args.args ; Array.of_list (List.rev args.rest) ]
+
+(* Dynamic allocation of blocks during injections ****************************)
 
 let ensure_block_global n =
-  let v = Ops.global n in
-  if Ops.equals (Ops.constant "undefined") v then
-    let b = Ops.obj [| |] in
-    Ops.set_global n b ; b
+  let v = js_global n in
+  if js_equals (js_constant "undefined") v then
+    let b = js_obj [| |] in
+    js_set_global n b ; b
   else v
 
 let ensure_block_var res =
-  if Ops.equals (Ops.constant "undefined") res then
-    Ops.obj [| |]
+  if js_equals (js_constant "undefined") res then
+    js_obj [| |]
   else res
 
 let ensure_block_arg args idx =
   let v = args.args.(idx) in
-  if Ops.equals (Ops.constant "undefined") v then
-    let b = Ops.obj [| |] in
+  if js_equals (js_constant "undefined") v then
+    let b = js_obj [| |] in
     args.args.(idx) <- b ; b
   else v
 
 let ensure_block_field o f =
-  let v = Ops.get o f in
-  if Ops.equals (Ops.constant "undefined") v then
-    let b = Ops.obj [| |] in
-    Ops.set o f b ; b
+  let v = js_get o f in
+  if js_equals (js_constant "undefined") v then
+    let b = js_obj [| |] in
+    js_set o f b ; b
   else v
 
 let ensure_block_cell o i =
-  let v = Ops.get_any o (Ops.of_int i) in
-  if Ops.equals (Ops.constant "undefined") v then
-    let b = Ops.obj [| |] in
-    Ops.set_any o (Ops.of_int i) b ; b
+  let v = js_get_any o (js_of_int i) in
+  if js_equals (js_constant "undefined") v then
+    let b = js_obj [| |] in
+    js_set_any o (js_of_int i) b ; b
   else v

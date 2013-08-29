@@ -130,7 +130,7 @@ let row name ?doc def =
 
 (** Maps different forms of a JavaScript object to the cases of an
     OCaml sum type. To be used only in type definitions or custom type
-    converters. Cases can be written using the {!!constr} macro. *)
+    converters. Cases can be written using the {!constr} macro. *)
 let variant cases =
   Variant cases
 
@@ -312,10 +312,19 @@ let string_enum cases =
   in
   variant cases
 
+(** Map a simple JavaScript string enum as a sum type directly using
+    the strings as constructor names.  *)
+let simple_string_enum cases =
+  let cases = List.map
+    (fun n -> constr n Guard.(root = string n) [])
+    cases
+  in
+  variant cases
+
 (** {2 Value mapping bodies} *)
 
 (** Calls a method on an object. By default, the call site is [args],
-    consistently with the {!args} and {!rest}, so yu do not need to
+    consistently with the {!arg} and {!rest}, so yu do not need to
     precise it if you have only one call site. *)
 let call ?(site = "args") sto =
   Call (sto, site)
@@ -328,7 +337,7 @@ let call_constructor ?(site = "args") sto =
 (** Calls a method on an object. By default, the call site is [args]
     and the receiver object is the [this] variable, consistently with
     the rest of the DSL. In particular, you do not need to precise
-    them to use [call_method] in conjunction with {!args} and
+    them to use [call_method] in conjunction with {!arg} and
     {!def_method}. *)
 let call_method ?(site = "args") ?(sto = Var "this") name =
   Call_method (sto, name, site)

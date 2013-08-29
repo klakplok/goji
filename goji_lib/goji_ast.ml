@@ -236,7 +236,7 @@ and mapping =
       [root] variable points to the return value. Not all combinations
       of argument types are accepted for injection. *)
   | Handler of parameter list * value * canceller
-  (** A functional value meant to be an event handler. See {!Callback}
+  (** A functional value meant to be an event handler. See [Callback]
       case for an explanation of the first two parameters and
       {!canceller} *)
 

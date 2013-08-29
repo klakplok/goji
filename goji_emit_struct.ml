@@ -11,9 +11,11 @@ open Goji_registry
 class virtual emitter = object (self)
   method format_implementation component =
     self # format_header component
-  ^^ hardline
-  ^^ format_phrases (self # format_elements component.elements)
-  ^^ hardline
+    ^^ hardline
+    ^^ !^"module G = Goji_internal"
+    ^^ hardline
+    ^^ format_phrases (self # format_elements component.elements)
+    ^^ hardline
 
   method format_interface component =
     self # format_header component

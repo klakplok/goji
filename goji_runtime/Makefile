@@ -1,4 +1,4 @@
-SOURCES=javaScript.ml goji_internal.ml
+SOURCES=goji_internal.ml javaScript.ml
 
 .PHONY: clean doc depends install uninstall
 
@@ -15,7 +15,7 @@ goji_runtime.cma: $(patsubst %.ml, %.cmo, $(SOURCES))
 
 doc: javaScript.ml
 	if [ ! -e doc ] ; then mkdir doc ; fi
-	ocamldoc -html -d doc javaScript.ml
+	ocamldoc -html -d doc $(SOURCES)
 
 clean:
 	rm -f *.cm* *~ *.o *goji_runtime.*
