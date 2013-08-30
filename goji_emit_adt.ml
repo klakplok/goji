@@ -115,16 +115,13 @@ end = struct
     exists_var n gvars
 
   let def_goji_var ?(used = false) ?(ro = true) ?(block = false) n (ovars, gvars, gflags) =
-    (try if fst (SM.find n gflags) then
-	error "trying to redefine read-only Goji variable %S" n
-     with Not_found -> ());
     let gvars, res = def_var "Goji" ~used n gvars in
     let gflags = SM.add n (ro, block) gflags in
     (ovars, gvars, gflags), res
 
-  let let_goji_var ?(used = false) ?(ro = true) ?(block = false) n v (ovars, gvars, gflags) =
+  let let_goji_var ?(used = false) ?(ro = false) ?(block = false) n v (ovars, gvars, gflags) =
     (try if fst (SM.find n gflags) then
-	error "trying to redefine read-only Goji variable %S" n
+	error "trying to assign read-only Goji variable %S" n
      with Not_found -> ());
     let gvars, res = let_var "Goji" n v gvars in
     let gflags = SM.add n (ro, block) gflags in
