@@ -1,3 +1,11 @@
+(****************************************************************************)
+(* GOJI (JavaScript Interface Generator for OCaml)                          *)
+(* This file is published under the WTF Public Licence, which means that    *)
+(* you can link it to your program, whatever its license, and even change   *)
+(* its license for inclusion in your project if you need it for some reason.*)
+(* (C) 2013 Benjamin Canou                                                  *)
+(****************************************************************************)
+
 (** Types and operations used by generated code *)
 
 (* Kernel of JavaScript operations *******************************************)
