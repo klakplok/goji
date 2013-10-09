@@ -133,7 +133,87 @@ the generated OCaml module.
 Describing data mappings
 ------------------------
 
-TODO
+In order for the library user to see only OCaml values, values have to
+be converted back and forth between their OCaml and JavaScript
+representations. For simple types, Goji has predefined construct
+defined by the type `Goji.AST.mapping`. When converting values of
+complex, structured types, the binding has to explain the mappings
+between the elements of the OCaml structure and those of the
+JavaScript one, though the type `Goji.AST.value`. This can often be
+done inline (for instance when describing the return value of a
+JavaScript function), or in two steps by using Goji's type definition
+construct and then by to refering this definition by name. This second
+option is also the only possibility when mapping records or variants.
+
+The goal of a type definition is twofold:
+
+ 1. Produce an OCaml type definition / abbreviation which helps having
+    a clean and documented interface.
+ 2. Explain how a value of this type is converted to a JavaScript
+    value.
+
+The second task is done by attaching two convertion functions to the
+type:
+
+- The **injector** takes an OCaml value and converts it to
+   JavaScript. In the case of type definitions, the result is a single
+   JavaScript value, but in other contexts, various effects can be
+   performed in the JavaScript world (for instance assigning function
+   parameters or globals), hence the name. We say that the function
+   injects an OCaml value in the JavaScript context.
+ - The **extractor** performs the opposite conversion: it extracts an
+   OCaml value from the JavaScript context. In the case of a type
+   definition, this context is actually a single JavaScript value.
+
+### Lenses ###
+
+The conversion functions are automatically generated from a single
+declarative description of the relations between the OCaml type
+definition and the JavaScript structure. These definitions are OCaml
+oriented, consistently with the rest of Goji, and are naturally read
+as extractions. However, they are actually reversible and one
+definition is enough to generate both converters. They can actually be
+seen as a sort of **lenses**.
+
+A lense is described using the following three AST node types.
+
+ - `Goji.AST.value` is the top level part of the description. It
+   describes the structure of the OCaml type, for instance `Tuple`, or
+   `Variant`. The leaves are described using the `Value` case, which
+   associates a `mapping` to a `storage` to describe the conversion of
+   a single JavaScript value.
+ - The `Goji.AST.storage` gives the location of the JavaScript
+   value. It is basically a path inside the JavaScript context, and in
+   the case of a type definition, a path from the root of the
+   JavaScript value. For instance, `Field ("x", Field ("b", Var
+   "root"))`. is equivalent to JavaScript `root.b.x`. The elements of
+   the JavaScript context are accessed through the `Var` construct. In
+   a type definition context, only the `"root"` Goji variable is
+   defined.
+ - The `Goji.AST.mapping` explains how to convert the JavaScript
+   value. Predefined cases (such as `Int`) are given for basic types,
+   are mapped to their native equivalents in both languages. This
+   means in particular that string are passed by copy by default. For
+   composite objects such as arrays, a `value` description has to be
+   provided to describe how each element has to be converted. Be aware
+   that in this sub-description, the `"root"`variable is hidden and
+   now describes the `"root"`of the element being converted, not the
+   root of the collection.
+
+The DSL provides a notation `@@` to describe a single `Value`.
+
+ - On the left is the `mapping`.
+ - On the right is the `storage`.
+
+### Examples ###
+
+ - `(int @@ field root "x")` means that the value is an `int` and is
+   located in the `"x"` field of the JavaScript value. If such an
+   expression is used in a type definition, it means that a value
+   `1234` in OCaml will be converted as an object `{ x: 1234 }` in
+   JavaScript, and vice versa.
+ - `tuple [ int @@ field root "x" ; int @@ field root "y" ]` maps a
+   pair `(12, 34)` of integers to a JavaScript object `{ x: 12, y: 34 }`.
 
 Describing functions / methods mappings
 ---------------------------------------

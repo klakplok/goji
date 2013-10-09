@@ -6,8 +6,12 @@
 
 (** A main entry point for conciseness. *)
 
-include Goji_ast
-include Goji_dsl
-include Goji_registry
+module AST = Goji_ast
+module DSL = Goji_dsl
+module Registry = Goji_registry
 module Grab = Goji_grab
 module License = Goji_license
+  
+include AST
+include DSL
+include Registry
