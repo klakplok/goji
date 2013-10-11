@@ -56,7 +56,7 @@ HOWTO start writing your first library binding
    obtain the sources of the JavaScript library by using
    `Goji.Grab`. This is explained in a dedicated section below.
  - Describe the internal structure as a list of toplevel binding
-   elements (type `Goji_ast.binding`). You can define sub-modules,
+   elements (type `Goji.AST.binding`). You can define sub-modules,
    types and values as described in a following section.
  - When you are ready and that your descriptions successfully compile
    against the `goji_lib` package, you can feed them to the `goji
@@ -72,14 +72,14 @@ You have two options to build binding descriptions.
 
  - Directly write values from Goji's intermediate representation (AST
    nodes), by calling the constructors defined by the various types of
-   the `Goji_ast` module. The AST is made public, documented and
+   the `Goji.AST` module. The AST is made public, documented and
    should be fairly stable. Even if you don't use it directly, it is a
    good idea to browse its definition for understanding how
    descriptions are structured.
  - The AST has been designed for being actually writable by hand, but
    since it encode features only needed by complex bindings, writing
    simple descriptions can be a little verbose or confusing. For this,
-   the `Goji_dsl` module defines functions that correspond to AST
+   the `Goji.DSL` module defines functions that correspond to AST
    constructors but with some parameters made optional. For instance,
    documentation can be passed with `~doc:"..."` or omitted (**but
    should not**).
@@ -97,7 +97,7 @@ specific binding, don't hesitate to ask for their integration.
 Top level binding description
 -----------------------------
 
-The `Goji.register_component` takes a list of `Goji_ast.binding`
+The `Goji.register_component` takes a list of `Goji.AST.binding`
 elements. This list contains descriptions of the top level elements of
 the generated OCaml module.
 
@@ -165,17 +165,18 @@ type:
    OCaml value from the JavaScript context. In the case of a type
    definition, this context is actually a single JavaScript value.
 
-### Lenses ###
+Conversion lenses
+-----------------
 
 The conversion functions are automatically generated from a single
 declarative description of the relations between the OCaml type
 definition and the JavaScript structure. These definitions are OCaml
 oriented, consistently with the rest of Goji, and are naturally read
 as extractions. However, they are actually reversible and one
-definition is enough to generate both converters. They can actually be
-seen as a sort of **lenses**.
+definition is enough to generate both converters (and can be seen as a
+dedicated kind of lenses).
 
-A lense is described using the following three AST node types.
+A lens is described using the following three AST node types.
 
  - `Goji.AST.value` is the top level part of the description. It
    describes the structure of the OCaml type, for instance `Tuple`, or
@@ -189,31 +190,64 @@ A lense is described using the following three AST node types.
    "root"))`. is equivalent to JavaScript `root.b.x`. The elements of
    the JavaScript context are accessed through the `Var` construct. In
    a type definition context, only the `"root"` Goji variable is
-   defined.
+   defined. The DSL provides the primitives `field`, `var` and `root`
+   so the previous example could br written `field root "x"` or
+   `field (var "root") "x"`.
  - The `Goji.AST.mapping` explains how to convert the JavaScript
-   value. Predefined cases (such as `Int`) are given for basic types,
-   are mapped to their native equivalents in both languages. This
-   means in particular that string are passed by copy by default. For
-   composite objects such as arrays, a `value` description has to be
-   provided to describe how each element has to be converted. Be aware
-   that in this sub-description, the `"root"`variable is hidden and
-   now describes the `"root"`of the element being converted, not the
-   root of the collection.
+   value. Predefined cases (such as `Int`, `int` in the DSL) are given
+   for basic types, are mapped to their native equivalents in both
+   languages. This means in particular that string are passed by copy
+   by default. For composite objects such as arrays, a `value` has to
+   be provided to describe how each element has to be converted (for
+   instance you can write `Array (Value (Int, Var "root"))` for an
+   array of integers, `array int` using the DSL). Be aware that in
+   this sub-description, the `"root"`variable is hidden and now
+   describes the `"root"`of the element being converted, not the root
+   of the collection.
 
-The DSL provides a notation `@@` to describe a single `Value`.
+Here are some example lenses and their meaning:
 
- - On the left is the `mapping`.
- - On the right is the `storage`.
+ - `Value (Float, Var "root")` means that an OCaml float is converted
+   to a JavaScript Number.
+ - `Value (Int, Field (Var "root", "x"))` means that the value is an
+   integer and is located in the `"x"` field of the JavaScript
+   value. If such an expression is used in a type definition, it means
+   that a value `1234` in OCaml will be converted as an object `{ x:
+   1234 }` in JavaScript, and vice versa.
+ - `Tuple [ Value (Int, Field (Var "root", "x")) ; Value (Int, Field (Var "root", "y")) ]`
+   maps a pair `(12, 34)` of integers to a JavaScript object `{ x: 12, y: 34 }`.
 
-### Examples ###
+Writing lenses using the DSL
+------------------------------
 
- - `(int @@ field root "x")` means that the value is an `int` and is
-   located in the `"x"` field of the JavaScript value. If such an
-   expression is used in a type definition, it means that a value
-   `1234` in OCaml will be converted as an object `{ x: 1234 }` in
-   JavaScript, and vice versa.
- - `tuple [ int @@ field root "x" ; int @@ field root "y" ]` maps a
-   pair `(12, 34)` of integers to a JavaScript object `{ x: 12, y: 34 }`.
+Writing lenses in the DSL is slightly different from writing their
+AST, using a little trick to increase conciseness. The DSL only
+provides primitives of types `value` and `storage`, plus an infix
+notation `@@` that we call a rerooting operator.
+
+ - On the left is an arbitrary `value`, which contains one or more
+   occurences of `Var "root"`.
+ - On the right is a `storage`, by which all aforementionned
+   occurences will be replaced.
+
+For each basic `mapping` (e.g. `Int`), the DSL provides a `value` of
+the same (lowercased) name describing a single value of this type
+(e.g. `val int : value = Value (Int, Var "root")`).
+
+This way, the same keyword (e.g. `int`) can be used to describe a
+standalone `value`, or on the left of an `@@` for its `mapping` part
+(e.g. `int @@ field root "x"`).
+
+The `@@` operator can actually take any `value` as its left operand, making
+some descriptions simpler and / or more concise. For instance, the following
+
+`tuple [ float @@ field (field root "pos") "x" ; float @@ field (field root "pos") "y" ]`
+
+could be alternatively written
+
+`tuple [ float @@ field root "x" ; float @@ field root "y" ] @@ field root "pos"`
+
+producing the same AST.
 
 Describing functions / methods mappings
 ---------------------------------------
@@ -231,7 +265,7 @@ HTML source code.
 
 For this to work, binding **authors** have to explain how to grab
 library sources in binding descriptions. This is done by writing a
-script using primitives from the `Goji_grab` module which will
+script using primitives from the `Goji.Grab` module which will
 download / unpack the sources and put them in a specific form, as
 explained just after. Such a script can be provided for every
 registered component using the `~grab` parameter.
