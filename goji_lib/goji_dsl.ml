@@ -106,7 +106,10 @@ let list v = Value (List v, Var "root")
 let assoc v = Value (Assoc v, Var "root")
 
 (** Maps the [root] variable to a value of a type parameter. *)
-let param n = Value (Param n, Var "root")
+let param n =
+  match parse_type_variable n with
+  | None, n -> Value (Param n, Var "root")
+  | _, _ -> invalid_arg (Printf.sprintf "Goji_dsl.param %S" n)
 
 (** Maps the [root] variable to a tuple whose components are mapped as
     specified by the elements of the given list. The components are

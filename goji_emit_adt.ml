@@ -156,7 +156,7 @@ end = struct
 	   if exists_goji_var v env then
 	     use_goji_var v env
 	   else
-	     !^"G.js_constant \"undefined\"")
+	     !^"Goji_internal.js_constant \"undefined\"")
 	 vars)
 end
 
@@ -211,7 +211,7 @@ class emitter = object (self)
     | Value (String, _) -> !^"string"
     | Value (Bool, _) -> !^"bool"
     | Value (Float, _) -> !^"float"
-    | Value (Any, _) -> !^"JavaScript.any"
+    | Value (Any, _) -> !^"Goji_internal.any"
     | Value (Void, _) -> !^"unit"
     | Option (_, v) ->
       self # format_value_type ~sa:true ~st:true v ^^ !^" option"
@@ -455,35 +455,35 @@ class emitter = object (self)
   method format_leaf_injector v leaf env =
     match leaf with
     (* simple types *)
-    | Int -> env, format_app !^"G.inject_int" [ Env.use_ocaml_var v env ]
-    | String -> env, format_app !^"G.inject_string" [ Env.use_ocaml_var v env ]
-    | Bool -> env, format_app !^"G.inject_bool" [ Env.use_ocaml_var v env ]
-    | Float -> env, format_app !^"G.inject_float" [ Env.use_ocaml_var v env ]
+    | Int -> env, format_app !^"Goji_internal.inject_int" [ Env.use_ocaml_var v env ]
+    | String -> env, format_app !^"Goji_internal.inject_string" [ Env.use_ocaml_var v env ]
+    | Bool -> env, format_app !^"Goji_internal.inject_bool" [ Env.use_ocaml_var v env ]
+    | Float -> env, format_app !^"Goji_internal.inject_float" [ Env.use_ocaml_var v env ]
     | Any -> env, Env.use_ocaml_var v env
     | Void -> env, empty
     (* higher order injections *)
     | Array def ->
       let local, decl = Env.def_ocaml_var "item" env in
       env, format_app
-        !^"G.inject_array"
+        !^"Goji_internal.inject_array"
         [ format_fun [ decl ] (snd (self # format_injector_body "item" def local)) ;
           Env.use_ocaml_var v env ]
     | List def ->
       let local, decl = Env.def_ocaml_var "item" env in
       env, format_app !^"Array.to_list" [
 	format_app
-          !^"G.inject_array"
+          !^"Goji_internal.inject_array"
           [ format_fun [ decl ] (snd (self # format_injector_body "item" def local)) ;
             Env.use_ocaml_var v env ] ]
     | Assoc def ->
       let local, decl = Env.def_ocaml_var "item" env in
       env, format_app
-        !^"G.inject_assoc"
+        !^"Goji_internal.inject_assoc"
         [ format_fun [ decl ] (snd (self # format_injector_body "item" def local)) ;
           Env.use_ocaml_var v env ]
     (* named types *)
     | Param _ -> (* TODO: parametric injections *)
-      env, format_app !^"G.inject_identity" [ Env.use_ocaml_var v env ]
+      env, format_app !^"Goji_internal.inject_identity" [ Env.use_ocaml_var v env ]
     | Abbrv ((_, (path, name)), Default) ->
       env, format_app (format_ident (path, "inject_" ^ name)) [ Env.use_ocaml_var v env ]
     | Abbrv (abbrv, Extern (inject, extract)) ->
@@ -550,55 +550,55 @@ class emitter = object (self)
       in
       env,
       format_app
-	!^"G.js_wrap_fun"
+	!^"Goji_internal.js_wrap_fun"
 	[ format_fun (if max_arg = 0 then [ !^" ()" ] else args) fun_body ]
 
   method format_storage_assignment arg sto env =
     let rec toplevel sto =
       match sto with
       | Global n ->
-	let body = format_app ~wrap:false !^"G.js_set_global" [ !^!n ; arg ] in
+	let body = format_app ~wrap:false !^"Goji_internal.js_set_global" [ !^!n ; arg ] in
 	env, seq_instruction body
       | Var n ->
 	let env, v = Env.let_goji_var n arg env in
 	env, seq_instruction' v
       | Arg (cs, n) ->
 	env,
-	seq_instruction (format_app ~wrap:false !^"G.set_arg" [ !^(cs ^ "'A") ; int n ; arg ])
+	seq_instruction (format_app ~wrap:false !^"Goji_internal.set_arg" [ !^(cs ^ "'A") ; int n ; arg ])
       | Rest cs ->
 	env,
-	seq_instruction (format_app ~wrap:false !^"G.push_arg" [ !^(cs ^ "'A") ; arg ])
+	seq_instruction (format_app ~wrap:false !^"Goji_internal.push_arg" [ !^(cs ^ "'A") ; arg ])
       | Field (sto, n) ->
 	let preq, env, blo = nested sto env in
 	env,
 	preq
-	@ (seq_instruction (format_app ~wrap:false !^"G.js_set" [ blo ; !^!n ; arg ]))
+	@ (seq_instruction (format_app ~wrap:false !^"Goji_internal.js_set" [ blo ; !^!n ; arg ]))
       | Cell (sto, i) ->
 	let preq, env, blo = nested sto env in
 	env,
 	preq 
         @ (seq_instruction
 	     (format_app ~wrap:false
-		!^"G.js_set_any "
+		!^"Goji_internal.js_set_any "
 		[ blo ;
-		  !^"(G.js_of_int" ^^^ !^(string_of_int i) ^^ !^")" ;arg ]))
+		  !^"(Goji_internal.js_of_int" ^^^ !^(string_of_int i) ^^ !^")" ;arg ]))
     and nested sto env =
       match sto with
       | Rest cs ->
 	error "indirect assignment of rest not supported"
       | Global n ->
-        [], env, format_app !^"G.ensure_block_global" [ !^!n ]
+        [], env, format_app !^"Goji_internal.ensure_block_global" [ !^!n ]
       | Var n ->
 	let env, slet =
 	  if Env.(not (exists_goji_var n env)) then
 	    let env, rlet =
-	      Env.let_goji_var ~block:true n !^"(G.js_obj [| |])" env
+	      Env.let_goji_var ~block:true n !^"(Goji_internal.js_obj [| |])" env
 	    in env, seq_instruction' rlet
 	  else if Env.(not (is_ro n env || is_block n env)) then
 	    let env, rlet =
 	      Env.let_goji_var ~block:true n
 		(format_app
-		   !^"G.ensure_block_var"
+		   !^"Goji_internal.ensure_block_var"
 		   [ Env.use_goji_var n env ])
 		env
 	    in env, seq_instruction' rlet
@@ -606,13 +606,13 @@ class emitter = object (self)
 	in
 	slet, env, Env.use_goji_var n env
       | Arg (cs, n) ->
-        [], env, format_app !^"G.ensure_block_arg" [ !^(cs ^ "'A") ; int n ]
+        [], env, format_app !^"Goji_internal.ensure_block_arg" [ !^(cs ^ "'A") ; int n ]
       | Field (sto, n) ->
 	let preq, env, res = nested sto env in
-        preq, env, format_app !^"G.ensure_block_field" [ res ; !^!n ]
+        preq, env, format_app !^"Goji_internal.ensure_block_field" [ res ; !^!n ]
       | Cell (sto, i) ->
 	let preq, env, res = nested sto env in
-        preq, env, format_app !^"G.ensure_block_cell" [ res ; int i ]
+        preq, env, format_app !^"Goji_internal.ensure_block_cell" [ res ; int i ]
     in toplevel sto
 
   (* Extraction methods *******************************************************)
@@ -690,16 +690,16 @@ class emitter = object (self)
 
   method format_leaf_extractor leaf arg env =
     match leaf with
-    | Int -> format_app !^"G.extract_int" [ arg ]
-    | String -> format_app !^"G.extract_string" [ arg ]
-    | Bool -> format_app !^"G.extract_bool" [ arg ]
-    | Float -> format_app !^"G.extract_float" [ arg ]
+    | Int -> format_app !^"Goji_internal.extract_int" [ arg ]
+    | String -> format_app !^"Goji_internal.extract_string" [ arg ]
+    | Bool -> format_app !^"Goji_internal.extract_bool" [ arg ]
+    | Float -> format_app !^"Goji_internal.extract_float" [ arg ]
     | Any -> arg
     | Void -> assert false
     | Array def ->
       let local, decl = Env.def_goji_var "root" env in
       format_app
-        !^"G.extract_array"
+        !^"Goji_internal.extract_array"
         [ format_fun [ decl ] (snd (self # format_extractor def local)) ;
 	  arg ]
     | List def ->
@@ -707,18 +707,18 @@ class emitter = object (self)
       format_app
 	!^"Array.to_list"
 	[ format_app
-            !^"G.extract_array"
+            !^"Goji_internal.extract_array"
             [ format_fun [ decl ] (snd (self # format_extractor def local)) ;
 	      arg ] ]
     | Assoc def ->
       let local, decl = Env.def_goji_var "root" env in
       format_app
-        !^"G.extract_assoc"
+        !^"Goji_internal.extract_assoc"
         [ format_fun [ decl ] (snd (self # format_extractor def local)) ;
 	  arg ]
     | Param _ -> (* FIXME: parametric converters *)
       format_app
-        !^"G.extract_identity"
+        !^"Goji_internal.extract_identity"
         [ arg ]
     | Abbrv ((_, (path, name)), Default) ->
       format_app (format_ident (path, "extract_" ^ name)) [ arg ]
@@ -733,29 +733,29 @@ class emitter = object (self)
 
   method format_storage_access sto env =
     match sto with
-    | Global n -> format_app !^"G.js_global" [ !^!n ]
+    | Global n -> format_app !^"Goji_internal.js_global" [ !^!n ]
     | Var n -> Env.use_goji_var n env
     | Arg ("args", n) -> Env.use_goji_var ("args'" ^ string_of_int n) env
     | Arg _ -> failwith "error 1458"
     | Rest _ -> failwith "error 1459"
     | Field (sto, n) ->
       format_app
-	!^"G.js_get"
+	!^"Goji_internal.js_get"
 	[ self # format_storage_access sto env ; !^!n ]
     | Cell (sto, i) ->
       format_app
-	!^"G.js_get_any "
+	!^"Goji_internal.js_get_any "
 	[ self # format_storage_access sto env ;
-	  !^"G.js_of_int " ^^ int i ]
+	  !^"Goji_internal.js_of_int " ^^ int i ]
 
   (** Constructs a JavaScript value from a constant litteral *)
   method format_const = function
-    | Const_int i -> !^(Printf.sprintf "(G.js_of_int %d)" i)
-    | Const_float f -> !^(Printf.sprintf "(G.js_of_float %g)" f)
-    | Const_bool b -> !^(Printf.sprintf "(G.js_of_bool %b)" b)
-    | Const_string s -> !^(Printf.sprintf "(G.js_of_string %S)" s)
-    | Const_undefined -> !^(Printf.sprintf "(G.js_constant %S)" "undefined")
-    | Const_null -> !^(Printf.sprintf "(G.js_constant %S)" "null")
+    | Const_int i -> !^(Printf.sprintf "(Goji_internal.js_of_int %d)" i)
+    | Const_float f -> !^(Printf.sprintf "(Goji_internal.js_of_float %g)" f)
+    | Const_bool b -> !^(Printf.sprintf "(Goji_internal.js_of_bool %b)" b)
+    | Const_string s -> !^(Printf.sprintf "(Goji_internal.js_of_string %S)" s)
+    | Const_undefined -> !^(Printf.sprintf "(Goji_internal.js_constant %S)" "undefined")
+    | Const_null -> !^(Printf.sprintf "(Goji_internal.js_constant %S)" "null")
 
   (** Compiles a guard to an OCaml boolean expression *)
   method format_guard guard env =
@@ -774,7 +774,7 @@ class emitter = object (self)
       format_app !^"(||)"
         [ self # format_guard g1 env ; self # format_guard g2 env ]
     | Const (sto, c) ->
-      format_app !^"G.js_equals"
+      format_app !^"Goji_internal.js_equals"
         [ self # format_storage_access sto env ;
           self # format_const c ]
 
@@ -879,27 +879,27 @@ class emitter = object (self)
     | Call_method (rsto, name, cs) ->
       let res =
 	format_app
-	  !^"G.js_call_method"
+	  !^"Goji_internal.js_call_method"
 	  [ self # format_storage_access rsto env ; !^!name ;
-	    format_app !^"G.build_args" [ !^(cs ^ "'A") ] ]
+	    format_app !^"Goji_internal.build_args" [ !^(cs ^ "'A") ] ]
       in
       let env, res = Env.let_goji_var "result" ~ro:false res env in
       env, seq_instruction' res
     | Call (fsto, cs) ->
       let res =
 	format_app
-	  !^"G.js_call"
+	  !^"Goji_internal.js_call"
 	  [ self # format_storage_access fsto env ;
-	    format_app !^"G.build_args" [ !^(cs ^ "'A") ] ]
+	    format_app !^"Goji_internal.build_args" [ !^(cs ^ "'A") ] ]
       in
       let env, res = Env.let_goji_var "result" ~ro:false res env in
       env, seq_instruction' res
     | New (csto, cs) ->
       let res =
 	format_app
-	  !^"G.js_call_constructor"
+	  !^"Goji_internal.js_call_constructor"
 	  [ self # format_storage_access csto env ;
-	    format_app !^"G.build_args" [ !^(cs ^ "'A") ] ]
+	    format_app !^"Goji_internal.build_args" [ !^(cs ^ "'A") ] ]
       in
       let env, res = Env.let_goji_var "result" ~ro:false res env in
       env, seq_instruction' res
@@ -986,7 +986,7 @@ class emitter = object (self)
 	 (fun n ->
             seq_let_in
               !^(n ^ "'A")
-              (format_app !^"G.alloc_args" [ int (size n) ]))
+              (format_app !^"Goji_internal.alloc_args" [ int (size n) ]))
 	 (collect body))
 
   (* interface generation entry points *)

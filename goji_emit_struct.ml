@@ -12,8 +12,6 @@ class virtual emitter = object (self)
   method format_implementation component =
     self # format_header component
     ^^ hardline
-    ^^ !^"module G = Goji_internal"
-    ^^ hardline
     ^^ format_phrases (self # format_elements component.elements)
     ^^ hardline
 

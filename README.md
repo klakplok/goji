@@ -240,13 +240,9 @@ standalone `value`, or on the left of an `@@` for its `mapping` part
 
 The `@@` operator can actually take any `value` as its left operand, making
 some descriptions simpler and / or more concise. For instance, the following
-
 `tuple [ float @@ field (field root "pos") "x" ; float @@ field (field root "pos") "y" ]`
-
 could be alternatively written
-
 `tuple [ float @@ field root "x" ; float @@ field root "y" ] @@ field root "pos"`
-
 producing the same AST.
 
 Describing functions / methods mappings
