@@ -190,7 +190,11 @@ and storage =
   (** A positional arg of a call site, write only except in callbacks. *)
   | Rest of call_site
   (** An optional argument pushed after all other positional
-      arguments and optional arguments already pushed. *)
+      arguments and already pushed optional arguments. *)
+  | Unroll of call_site
+  (** Makes sense (only) when associated with a JavaScript
+      array. Unrolls the collection after all other positional
+      arguments and already pushed optional arguments. *)
   | Field of storage * string
   (** A field in a JavaScript object. *)
   | Cell of storage * int
@@ -389,6 +393,7 @@ class map = object (self)
   method storage = function
     | Global s -> Global s
     | Var s -> Var s
+    | Unroll cs -> Unroll cs
     | Arg (cs, i) -> Arg (self # call_site cs, i)
     | Rest c -> Rest (self # call_site c)
     | Field (s, n) -> Field (self # storage s, n)
@@ -543,6 +548,7 @@ class iter = object (self)
     | Var s -> ()
     | Arg (cs, i) -> self # call_site cs
     | Rest c -> self # call_site c
+    | Unroll c -> self # call_site c
     | Field (s, n) -> self # storage s
     | Cell (s, i) -> self # storage s
 

@@ -470,11 +470,10 @@ class emitter = object (self)
           Env.use_ocaml_var v env ]
     | List def ->
       let local, decl = Env.def_ocaml_var "item" env in
-      env, format_app !^"Array.to_list" [
-	format_app
-          !^"Goji_internal.inject_array"
-          [ format_fun [ decl ] (snd (self # format_injector_body "item" def local)) ;
-            Env.use_ocaml_var v env ] ]
+      env, format_app
+        !^"Goji_internal.inject_array"
+        [ format_fun [ decl ] (snd (self # format_injector_body "item" def local)) ;
+          format_app !^"Array.of_list" [ Env.use_ocaml_var v env ] ]
     | Assoc def ->
       let local, decl = Env.def_ocaml_var "item" env in
       env, format_app
@@ -482,12 +481,19 @@ class emitter = object (self)
         [ format_fun [ decl ] (snd (self # format_injector_body "item" def local)) ;
           Env.use_ocaml_var v env ]
     (* named types *)
-    | Param _ -> (* TODO: parametric injections *)
+    | Param _ ->
+      (* at this point, a value whose type is a free vriable is left untouched *)
       env, format_app !^"Goji_internal.inject_identity" [ Env.use_ocaml_var v env ]
-    | Abbrv ((_, (path, name)), Default) ->
-      env, format_app (format_ident (path, "inject_" ^ name)) [ Env.use_ocaml_var v env ]
-    | Abbrv (abbrv, Extern (inject, extract)) ->
-      env, format_app (format_ident inject) [ Env.use_ocaml_var v env ]
+    | Abbrv ((params, (path, name)), (Default | Extern _ as mode)) ->
+      let inject = match mode with Default -> (path, "inject_" ^ name) | Extern (i, _) -> i | _ -> assert false in
+      let local, decl = Env.def_ocaml_var "item" env in
+      let param_injectors =
+        List.map
+          (fun p -> format_fun [ decl ] (snd (self # format_injector_body "item" p local)))
+          params
+      in
+      env, format_app (format_ident inject)
+        (param_injectors @ [ Env.use_ocaml_var v env ])
     | Abbrv (abbrv, Custom def) ->
       let local, decl = Env.def_ocaml_var "v" env in
       env, format_app
@@ -565,6 +571,9 @@ class emitter = object (self)
       | Arg (cs, n) ->
 	env,
 	seq_instruction (format_app ~wrap:false !^"Goji_internal.set_arg" [ !^(cs ^ "'A") ; int n ; arg ])
+      | Unroll cs ->
+	env,
+	seq_instruction (format_app ~wrap:false !^"Goji_internal.unroll_arg" [ !^(cs ^ "'A") ; arg ])
       | Rest cs ->
 	env,
 	seq_instruction (format_app ~wrap:false !^"Goji_internal.push_arg" [ !^(cs ^ "'A") ; arg ])
@@ -586,6 +595,8 @@ class emitter = object (self)
       match sto with
       | Rest cs ->
 	error "indirect assignment of rest not supported"
+      | Unroll cs ->
+	error "indirect assignment of unroll not supported"
       | Global n ->
         [], env, format_app !^"Goji_internal.ensure_block_global" [ !^!n ]
       | Var n ->
@@ -716,14 +727,16 @@ class emitter = object (self)
         !^"Goji_internal.extract_assoc"
         [ format_fun [ decl ] (snd (self # format_extractor def local)) ;
 	  arg ]
-    | Param _ -> (* FIXME: parametric converters *)
+    | Param _ ->
+      (* At this point, it is a free variable so the value is passed as is *)
       format_app
         !^"Goji_internal.extract_identity"
         [ arg ]
-    | Abbrv ((_, (path, name)), Default) ->
-      format_app (format_ident (path, "extract_" ^ name)) [ arg ]
-    | Abbrv (abbrv, Extern (inject, extract)) ->
-      format_app (format_ident extract) [ arg ]
+    | Abbrv ((params, (path, name)), (Default | Extern _ as mode)) ->
+      let extract = match mode with Default -> (path, "extract_" ^ name) | Extern (_, e) -> e | _ -> assert false in
+      let local, decl = Env.def_goji_var "root" env in
+      let param_extractors = List.map (fun p -> format_fun [ decl ] (snd (self # format_extractor p local))) params in
+      format_app (format_ident extract) (param_extractors @ [ arg ])
     | Callback _ | Handler _ ->
       error "functional extraction not supported yet"
     | Abbrv (abbrv, Custom def) ->
@@ -738,6 +751,7 @@ class emitter = object (self)
     | Arg ("args", n) -> Env.use_goji_var ("args'" ^ string_of_int n) env
     | Arg _ -> failwith "error 1458"
     | Rest _ -> failwith "error 1459"
+    | Unroll _ -> failwith "error 1457"
     | Field (sto, n) ->
       format_app
 	!^"Goji_internal.js_get"
@@ -750,6 +764,7 @@ class emitter = object (self)
 
   (** Constructs a JavaScript value from a constant litteral *)
   method format_const = function
+    | Const_int i when i < 0 -> !^(Printf.sprintf "(Goji_internal.js_of_int (%d))" i)
     | Const_int i -> !^(Printf.sprintf "(Goji_internal.js_of_int %d)" i)
     | Const_float f -> !^(Printf.sprintf "(Goji_internal.js_of_float %g)" f)
     | Const_bool b -> !^(Printf.sprintf "(Goji_internal.js_of_bool %b)" b)

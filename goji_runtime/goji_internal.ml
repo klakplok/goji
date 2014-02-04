@@ -112,6 +112,34 @@ let extract_array (extract : any -> 'a) (a : any) : 'a array =
 let extract_assoc (extract : any -> 'a) (a : any) : (_ * 'a) list =
   failwith "Goji_internal.extract_assoc not implemented"
 
+(* High level converters *****************************************************)
+
+let inject_nonempty_array_or def (inject : 'a -> any) (a : 'a array) : any =
+  match a with
+  | [||] -> def
+  | a -> inject_array inject a
+
+let inject_nonempty_list_or def (inject : 'a -> any) (a : 'a list) : any =
+  match a with
+  | [] -> def
+  | a -> inject_array inject (Array.of_list a)
+
+let extract_nonempty_array_or def (extract : any -> 'a) (a : any) : 'a array =
+  if js_equals a def then [||] else extract_array extract a
+
+let extract_nonempty_list_or def (extract : any -> 'a) (a : any) : 'a list =
+  if js_equals a def then [] else Array.to_list (extract_array extract a)
+
+let inject_nonempty_array_or_undefined i a = inject_nonempty_array_or js_undefined i a
+let inject_nonempty_list_or_undefined i a = inject_nonempty_list_or js_undefined i a
+let extract_nonempty_array_or_undefined i a = extract_nonempty_array_or js_undefined i a
+let extract_nonempty_list_or_undefined i a = extract_nonempty_list_or js_undefined i a
+
+let inject_nonempty_array_or_null i a = inject_nonempty_array_or js_null i a
+let inject_nonempty_list_or_null i a = inject_nonempty_list_or js_null i a
+let extract_nonempty_array_or_null i a = extract_nonempty_array_or js_null i a
+let extract_nonempty_list_or_null i a = extract_nonempty_list_or js_null i a
+
 (* Arguments *****************************************************************)
 
 type arg_block = { args : any array ; mutable rest : any list ; }
@@ -122,6 +150,12 @@ let alloc_args nb =
 
 let push_arg args arg =
   args.rest <- arg :: args.rest
+
+let unroll_arg args arg =
+  let len = js_to_int (js_get arg "length") in
+  for i = 0 to len - 1 do
+    push_arg args (js_get_any arg (js_of_int i))
+  done
 
 let set_arg args idx arg =
   args.args.(idx) <- arg

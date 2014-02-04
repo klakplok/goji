@@ -31,6 +31,37 @@ type tident = string
 (** A JavaScript global path in pointed notation. *)
 type jsglobal = string
 
+
+(** Capitalize a string and replace forbidden characters with
+    underscores so it becomes a valid constructor name *)
+let mangle_constructor c =
+  if c = "" then "Empty"
+  else
+    let c = match c.[0] with
+      | 'A'..'Z' -> String.copy c
+      | 'a'..'z' -> String.capitalize c
+      | _ -> "C_" ^ c in
+    for i = 1 to String.length c - 1 do
+      match c.[i] with
+      | 'a'..'z' | 'A'..'Z' | '\'' | '0'..'9' -> ()
+      | _ -> c.[i] <- '_'
+    done ; c
+
+(** Uncapitalize a string and replace forbidden characters with
+    underscores so it becomes a valid identifier name *)
+let mangle_ident c =
+  if c = "" then "empty"
+  else
+    let c = match c.[0] with
+      | 'a'..'z' -> String.copy c
+      | 'A'..'Z' -> String.uncapitalize c
+      | _ -> "C_" ^ c in
+    for i = 1 to String.length c - 1 do
+      match c.[i] with
+      | 'a'..'z' | 'A'..'Z' | '\'' | '0'..'9' -> ()
+      | _ -> c.[i] <- '_'
+    done ; c
+
 (** Converts a textual type parameter to its AST representation. ["a"]
     is parsed as [(None, "a")], ["+b"] is parsed as [(Some Covariant,
     "b")] and ["-c"] is parsed as [(Some Contravariant, "c")].*)
@@ -228,6 +259,10 @@ let arg ?(site = "args") n = Arg (site, n)
 (** An optional argument, pushed at the end of positional arguments. *)
 let rest ?(site = "args") () = Rest (site)
 
+(** A JavaScript array considered as a sequence of optional arguments,
+    all pushed at the end of positional arguments. *)
+let unroll ?(site = "args") () = Unroll (site)
+
 (**/**)
 let rec reroot v ns =
   match v with
@@ -253,7 +288,7 @@ and reroot_storage sto ns =
   | Var "root" -> ns (* all this code for this... *)
   | Field (s, n) -> Field (reroot_storage s ns, n)
   | Cell (s, i) -> Cell (reroot_storage s ns, i)
-  | Var _ | Arg _ | Rest _ | Global _  as s -> s
+  | Var _ | Arg _ | Rest _ | Unroll _ | Global _  as s -> s
 and reroot_guard g ns =
   match g with
   | Const (s, c) -> Const (reroot_storage s ns, c)
@@ -306,7 +341,7 @@ let int_enum cases =
       cases
   in
   variant cases
-
+                   
 (** Map a simple JavaScript string enum as a sum type  *)
 let string_enum cases =
   let cases = List.map
@@ -316,13 +351,33 @@ let string_enum cases =
   variant cases
 
 (** Map a simple JavaScript string enum as a sum type directly using
-    the strings as constructor names.  *)
+    the (mangled) strings as constructor names. *)
 let simple_string_enum cases =
   let cases = List.map
-    (fun n -> constr n Guard.(root = string n) [])
+    (fun n -> constr (mangle_constructor n) Guard.(root = string n) [])
     cases
   in
   variant cases
+
+let nonempty_array_or_undefined ty =
+  let injector = ([ "Goji_internal" ], "inject_nonempty_array_or_undefined") in
+  let extractor = ([ "Goji_internal" ], "extract_nonempty_array_or_undefined") in
+  Value (Abbrv (([ ty ], ([], "array")), Extern (injector, extractor)), Var "root")
+
+let nonempty_list_or_undefined ty =
+  let injector = ([ "Goji_internal" ], "inject_nonempty_list_or_undefined") in
+  let extractor = ([ "Goji_internal" ], "extract_nonempty_list_or_undefined") in
+  Value (Abbrv (([ ty ], ([], "list")), Extern (injector, extractor)), Var "root")
+
+let nonempty_array_or_null ty =
+  let injector = ([ "Goji_internal" ], "inject_nonempty_array_or_null") in
+  let extractor = ([ "Goji_internal" ], "extract_nonempty_array_or_null") in
+  Value (Abbrv (([ ty ], ([], "array")), Extern (injector, extractor)), Var "root")
+
+let nonempty_list_or_null ty =
+  let injector = ([ "Goji_internal" ], "inject_nonempty_list_or_null") in
+  let extractor = ([ "Goji_internal" ], "extract_nonempty_list_or_null") in
+  Value (Abbrv (([ ty ], ([], "list")), Extern (injector, extractor)), Var "root")
 
 (** {2 Value mapping bodies} *)
 
