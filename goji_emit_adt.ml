@@ -922,19 +922,18 @@ class emitter = object (self)
       let res = self # format_storage_access sto env in
       let env, res = Env.let_goji_var "result" ~ro:false res env in
       env, seq_instruction' res
-    | Inject_constants asses ->
-      List.fold_right
-	(fun (c, sto) (env, r) ->
-	  let c = (self # format_const c) in
-	  let env, ass = self # format_storage_assignment c sto env in
-	  env, ass @ r)
-	asses (env, [])
+    | Set_const (dst, src) ->
+      let c = (self # format_const src) in
+      self # format_storage_assignment c dst env
+    | Set (dst, src) ->
+      let c = (self # format_storage_access src env) in
+      self # format_storage_assignment c dst env
     | Abs (n, v, b) ->
       let envi, resi = self # format_body v env in
       let nvars = Env.goji_vars_diff env envi in
       if nvars <> [] then
 	let ndecls = List.map (function "result" -> n | o -> o) nvars in
-	let reti = format_tuple (List.map (fun v -> Env.use_goji_var n envi) nvars) in
+	let reti = format_tuple (List.map (fun v -> Env.use_goji_var v envi) nvars) in
 	let resi = resi @ seq_instruction reti in
 	let env =
 	  List.fold_left
@@ -981,7 +980,7 @@ class emitter = object (self)
   method format_call_sites params body =
     let rec collect = function
       | Call_method (_, _, cs) | Call (_, cs) | New (_, cs) -> [ cs ]
-      | Access _ | Nop | Inject _ | Inject_constants _ -> []
+      | Access _ | Nop | Inject _ | Set_const _ | Set _ -> []
       | Test (_, b1, b2) | Abs (_, b1, b2) -> collect b1 @ collect b2
     in
     let size n =

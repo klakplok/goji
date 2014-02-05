@@ -128,10 +128,15 @@ and body =
       subexpression of [Abs] or as return value. *)
   | Inject of path * value
   (** Inject the value in an OCaml variable in the JavaScript context. *)
-  | Inject_constants of (const * storage) list
-  (** Stores constants at JavaScript locations, returns a void
+  | Set_const of storage * const
+  (** Stores a constant at a JavaScript location, returns a void
       result, useful for writing complex setters or insert phantom
       parameters in call sites. *)
+  | Set of storage * storage
+  (** Stores the current content of a JavaScript location to anotther
+      one, returns a void result, useful for writing complex setters
+      (with intermediate objects) or insert phantom parameters in call
+      sites. *)
   | Test of guard * body * body
   (** Evaluates a guard and chooses a code path depending on its
       result. Can also be used to raise an exception depending (or
@@ -368,8 +373,10 @@ class map = object (self)
       New (self # storage s, self # call_site cs)
     | Access s ->
       Access (self # storage s)
-    | Inject_constants l ->
-      Inject_constants (List.map (fun (c, s) -> self # const c, self # storage s) l)
+    | Set_const (s, c) ->
+      Set_const (self # storage s, self # const c)
+    | Set (s, s') ->
+      Set (self # storage s, self # storage s')
     | Inject (n, v) ->
       Inject (n, self # value v)
     | Abs (s, b1, b2) ->
@@ -517,10 +524,12 @@ class iter = object (self)
       self # call_site cs
     | Access s ->
       self # storage s
-    | Inject_constants l ->
-      List.iter
-	(fun (c, s) -> self # const c ; self # storage s)
-	l
+    | Set_const (s, c) ->
+      self # storage s ;
+      self # const c
+    | Set (s, s') ->
+      self # storage s ;
+      self # storage s'
     | Inject (n, v) ->
       self # value v
     | Abs (s, b1, b2) ->

@@ -403,9 +403,11 @@ let call_method ?(site = "args") ?(sto = Var "this") name =
 (** Returns the value at a given JavaScript location. *)
 let get sto = Access sto
 
-(** An imperative assignment of a JavaScript constant at a given
-    location. *)
-let set sto v = Inject_constants [ (v, sto) ]
+(** An assignment of a JavaScript constant to a given location. *)
+let set_const dst v = Set_const (dst, v)
+
+(** An imperative assignment to a location from another. *)
+let set dst src = Set (dst, src)
 
 (** A [let  .. in] construct. *)
 let abs name v body = Abs (name, v, body)
