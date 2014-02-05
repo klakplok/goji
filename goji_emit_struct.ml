@@ -72,6 +72,8 @@ class virtual emitter = object (self)
     self # format_method_definition abbrv name params body ret doc
   | Function (name, params, body, ret, doc) ->
     self # format_function_definition name params body ret doc
+  | Let (name, body, ret, doc) ->
+    self # format_value_definition name body ret doc
   | Exception (name, doc) ->
     let doc = self # format_doc doc in
     [ format_exception name ~doc [] ]
@@ -96,6 +98,8 @@ class virtual emitter = object (self)
     self # format_method_interface abbrv name params ret doc
   | Function (name, params, body, ret, doc) ->
     self # format_function_interface name params ret doc
+  | Let (name, body, ret, doc) ->
+    self # format_value_interface name ret doc
   | Exception (name, doc) ->
     let doc = self # format_doc doc in
     [ format_exception name ~doc [] ]
@@ -111,6 +115,9 @@ class virtual emitter = object (self)
   method virtual format_function_definition
       : string -> parameter list -> body -> value -> comment
 	-> document list
+  method virtual format_value_definition
+      : string -> body -> value -> comment
+	-> document list
   method virtual format_inherits_definition
       : string -> abbrv -> abbrv -> comment
 	-> document list
@@ -123,6 +130,9 @@ class virtual emitter = object (self)
 	-> document list
   method virtual format_function_interface
       : string -> parameter list -> value -> comment
+	-> document list
+  method virtual format_value_interface
+      : string -> value -> comment
 	-> document list
   method virtual format_inherits_interface
       : string -> abbrv -> abbrv -> comment

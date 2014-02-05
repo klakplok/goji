@@ -68,6 +68,9 @@ let js_undefined = js_constant "undefined"
 
 let js_null = js_constant "null"
 
+external js_instanceof : any -> any -> bool = "caml_js_instanceof"
+
+
 (* Conversions from OCaml to JavaScript *************************************)
 
 let inject_identity (i : 'a) : any = js_magic i
@@ -145,7 +148,7 @@ let extract_nonempty_list_or_null i a = extract_nonempty_list_or js_null i a
 type arg_block = { args : any array ; mutable rest : any list ; }
 
 let alloc_args nb =
-  { args = Array.make nb (js_constant "undefined") ;
+  { args = Array.make nb (js_constant "null") ;
     rest = [] }
 
 let push_arg args arg =

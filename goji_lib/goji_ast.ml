@@ -36,9 +36,11 @@ and binding =
   | Type of (variance option * string) list * string * typedef * comment
   (** Maps an OCaml type definition to a specific JavaScript construct. *)
   | Function of string * parameter list * body * value * comment
-  (** Maps an OCaml function.  In the
-      [value] mapping, the [root] variable points to the root of
-      the result of the [body]. *)
+  (** Maps an OCaml function. In the [value] mapping, the [root]
+      variable points to the root of the result of the [body]. *)
+  | Let of string * body * value * comment
+  (** Maps an OCaml value. In the [value] mapping, the [root] variable
+      points to the root of the result of the [body]. *)
   | Method of abbrv * string * parameter list * body * value * comment
   (** Maps an OCaml function attached to a specific type. In the
       [value] mapping, the [root] variable points to the root of the
@@ -155,6 +157,10 @@ and body =
 and guard =
   | Const of storage * const
   (** Check / inject a constant in the JavaScript context. *)
+  | Equals of storage * storage
+  (** Check that two elements are equal in the JavaScript context.
+      When converting from OCaml to JavaScript, assigns the left part
+      of the pair to the left one. *)
   | Not of guard
   (** Invert the result of a guard. When injecting, the subexpression
       is ignored.*)
@@ -276,6 +282,7 @@ and const =
   | Const_bool of bool
   | Const_string of string
   | Const_undefined
+  | Const_object of string
   | Const_null
 
 (** describe a single function paramerer, used in top level mappings and callbacks . *)
@@ -332,6 +339,11 @@ class map = object (self)
 		self # body body,
 		self # value ret,
 		self # comment doc)
+    | Let (s, body, ret, doc) ->
+      Let (s,
+	   self # body body,
+	   self # value ret,
+	   self # comment doc)
     | Exception (s, doc) ->
       Exception (s, self # comment doc)
     | Inherits (n, abbrv1, abbrv2, doc) ->
@@ -387,6 +399,7 @@ class map = object (self)
 
   method guard = function
     | Const (s, c) -> Const (self # storage s, self # const c)
+    | Equals (s, s') -> Equals (self # storage s, self # storage s')
     | Not g -> Not (self # guard g)
     | And (g1, g2) -> And (self # guard g1, self # guard g2)
     | Or (g1, g2) -> Or (self # guard g1, self # guard g2)
@@ -429,6 +442,7 @@ class map = object (self)
     | Const_bool b -> Const_bool b
     | Const_string s -> Const_string s
     | Const_undefined -> Const_undefined
+    | Const_object cstr -> Const_object cstr
     | Const_null -> Const_null
 
   method parameter (pt, n, doc, v) =
@@ -471,6 +485,10 @@ class iter = object (self)
       List.iter (self # parameter) pl ;
       self # body body ;
       self # value ret ;
+      self # comment doc
+    | Let (name, body, def, doc) ->
+      self # body body ;
+      self # value def ;
       self # comment doc
     | Exception (s, doc) ->
       self # comment doc
@@ -543,6 +561,7 @@ class iter = object (self)
 
   method guard = function
     | Const (s, c) -> self # storage s ; self # const c
+    | Equals (s, s') -> self # storage s ; self # storage s'
     | Not g -> self # guard g
     | And (g1, g2) -> self # guard g1 ; self # guard g2
     | Or (g1, g2) -> self # guard g1 ; self # guard g2

@@ -208,7 +208,7 @@ class emitter = object (self)
                format_comment false (self # format_doc doc)))
            cases)
     | Value (Int, _) -> !^"int"
-    | Value (String, _) -> !^"string"
+    | Value (String, _) -> !^"String.t"
     | Value (Bool, _) -> !^"bool"
     | Value (Float, _) -> !^"float"
     | Value (Any, _) -> !^"Goji_internal.any"
@@ -434,20 +434,18 @@ class emitter = object (self)
 
   method format_guard_injector g env =
     let rec collect = function
-      | Const (sto, c) -> [ (sto, c) ]
+      | Const (sto, c) -> [ (sto, self # format_const c) ]
+      | Equals (sto, sto') -> [ (sto, self # format_storage_access sto' env) ]
       | Raise _ | True | False | Not _ -> []
       | And (g1, g2) -> collect g1 @  collect g2
       | Or (g, _) -> collect g
     in
     let env, seq =
       List.fold_left
-	(fun (env, seq) (sto, c) ->
-	  let env, instrs =
-	    self # format_storage_assignment
-	      (self # format_const c)
-	      sto env
-	  in env, instrs @ seq)
-	(env, [])
+	(fun (env, seq) (sto, v) ->
+           let env, instrs = self # format_storage_assignment v sto env in
+           env, instrs @ seq)
+        (env, [])
 	(collect g)
     in
     env, seq
@@ -769,8 +767,10 @@ class emitter = object (self)
     | Const_float f -> !^(Printf.sprintf "(Goji_internal.js_of_float %g)" f)
     | Const_bool b -> !^(Printf.sprintf "(Goji_internal.js_of_bool %b)" b)
     | Const_string s -> !^(Printf.sprintf "(Goji_internal.js_of_string %S)" s)
-    | Const_undefined -> !^(Printf.sprintf "(Goji_internal.js_constant %S)" "undefined")
-    | Const_null -> !^(Printf.sprintf "(Goji_internal.js_constant %S)" "null")
+    | Const_undefined -> !^"(Goji_internal.js_undefined)"
+    | Const_null -> !^"(Goji_internal.js_null)"
+    | Const_object cstr -> !^(Printf.sprintf "(Goji_internal.js_call_constructor \
+                                              (Goji_internal.js_global %S) [||])" cstr)
 
   (** Compiles a guard to an OCaml boolean expression *)
   method format_guard guard env =
@@ -778,7 +778,7 @@ class emitter = object (self)
     | True -> !^"true"
     | False -> !^"false"
     | Raise p ->
-      format_app !^"raise" [ format_ident p ]
+      format_app !^"raise" [ !^"(" ^^ format_ident p ^^ !^ ")" ]
     | Not g ->
       format_app !^"not"
         [ self # format_guard g env ]
@@ -788,10 +788,18 @@ class emitter = object (self)
     | Or (g1, g2) ->
       format_app !^"(||)"
         [ self # format_guard g1 env ; self # format_guard g2 env ]
+    | Const (sto, Const_object cstr) ->
+      format_app !^"Goji_internal.js_instanceof"
+        [ self # format_storage_access sto env ;
+          !^(Printf.sprintf "(Goji_internal.js_global %S)" cstr) ]
     | Const (sto, c) ->
       format_app !^"Goji_internal.js_equals"
         [ self # format_storage_access sto env ;
           self # format_const c ]
+    | Equals (sto, sto') ->
+      format_app !^"Goji_internal.js_equals"
+        [ self # format_storage_access sto env ;
+          self # format_storage_access sto' env ]
 
   (* definition generation entry points ***************************************)
 
@@ -880,6 +888,26 @@ class emitter = object (self)
             (format_fun_pat !^name  ~annot:(self # format_value_type ret)
 	       (List.map format_param params))
 	    body) ]
+
+  method format_value_definition name body ret doc =
+    let body =
+      let call_sites = self # format_call_sites [] body in
+      let env = Env.empty in
+      let env, body = self # format_body body env in
+      let env, ret =
+	match ret with
+	| Value (Void, _) when not Env.(exists_goji_var "result" env)->
+	  env, []
+	| Value (Void, _) ->
+	  env, seq_result (format_app !^"ignore" [ Env.use_goji_var "result" env ])
+	| _ ->
+	  self # format_result_extractor Goji_dsl.(ret @@ Var "result") env
+      in
+      Env.warn_unused env ;
+      format_sequence (call_sites @ body @ ret)
+    in
+    [ format_comment true (self # format_doc doc)
+      ^^ (format_let !^name body) ]
 
   method format_inherits_definition name t1 t2 doc =
     let params = [ Curry, "this", Nodoc,
@@ -1057,6 +1085,12 @@ class emitter = object (self)
       ^^ format_val
   	  !^name
           (self # format_fun_type params ret) ]
+
+  method format_value_interface name ret doc =
+    [ format_comment true (self # format_doc doc)
+      ^^ format_val
+  	  !^name
+          (self # format_value_type ret) ]
 
   method format_inherits_interface name t1 t2 doc =
     let params = [ Curry, "this", Nodoc,

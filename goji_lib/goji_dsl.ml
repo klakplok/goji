@@ -120,9 +120,19 @@ let float = Value (Float, Var "root")
 let void = Value (Void, Var "root")
 
 (** Maps the [root] variable to a specific OCaml type. *)
-let abbrv ?(tparams = []) ?(converters = Default) tname =
+let abbrv ?(tparams = []) tname =
   let tpath = Goji_syntax.parse_qualified_name tname in
-  Value (Abbrv ((tparams, tpath), converters), Var "root")
+  Value (Abbrv ((tparams, tpath), Default), Var "root")
+
+(** Maps the [root] variable to a specific OCaml type with a specific mapping. *)
+let custom_abbrv ?(tparams = []) def tname =
+  let tpath = Goji_syntax.parse_qualified_name tname in
+  Value (Abbrv ((tparams, tpath), Custom def), Var "root")
+
+(** Maps the [root] variable to a specific OCaml type with external converters. *)
+let extern_abbrv ?(tparams = []) inj ext tname =
+  let tpath = Goji_syntax.parse_qualified_name tname in
+  Value (Abbrv ((tparams, tpath), Extern (inj, ext)), Var "root")
 
 (** Maps the [root] variable to an array whose elements are mapped
     by the given argument. *)
@@ -214,12 +224,14 @@ module Const = struct
   let string s = Const_string s
   let undefined = Const_undefined
   let null = Const_null
+  let obj cstr = Const_object cstr
 end
 
 (** A specific DSL to write guards as infix boolean expressions. *)
 module Guard = struct
   include Const
   let (=) s c = Const (s, c)
+  let (==) s s' = Equals (s, s')
   let not g = Not g
   let (&&) gl gr = And (gl, gr)
   let (||) gl gr = Or (gl, gr)
@@ -292,6 +304,7 @@ and reroot_storage sto ns =
 and reroot_guard g ns =
   match g with
   | Const (s, c) -> Const (reroot_storage s ns, c)
+  | Equals (s, s') -> Equals (reroot_storage s ns, reroot_storage s' ns)
   | Not g -> Not (reroot_guard g ns)
   | And (gl, gr) -> And (reroot_guard gl ns, reroot_guard gr ns)
   | Or (gl, gr) -> Or (reroot_guard gl ns, reroot_guard gr ns)
@@ -416,6 +429,11 @@ let abs name v body = Abs (name, v, body)
     is also the only possibility to raise an exception.  *)
 let test guard bt bf = Test (guard, bt, bf)
 
+let var_instanceof name cstr =
+  test Guard.(var name = obj cstr
+              || raise ("Invalid_argument \"instanceof " ^ cstr ^ "\""))
+    (get (var name)) (get (var name))
+
 (** {2 Bindings} *)
 
 let def_type ?(tparams = []) ?doc tname tdef =
@@ -435,6 +453,10 @@ let def_method ?(tparams = []) tname name ?doc params body ret =
 let def_function name ?doc params body ret =
   let doc = match doc with None -> Nodoc | Some text -> Doc text in
   Function (name, params, body, ret, doc)
+
+let def_value name ?doc body ret =
+  let doc = match doc with None -> Nodoc | Some text -> Doc text in
+  Let (name, body, ret, doc)
 
 let inherits (tp1, (t1 : tident)) (tp2, (t2 : tident)) ?doc name =
   let doc = match doc with None -> Nodoc | Some text -> Doc text in
