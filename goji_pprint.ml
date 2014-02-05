@@ -170,21 +170,28 @@ let format_record_type fs =
             in lines tl))
 
 let format_sum_type cs =
+  let d doc = if doc = empty then empty else break 1 ^^ doc in
   let field c = break 1 ^^ group (!^"*" ^^ break 1 ^^ c) in
   let args vs doc =
     match vs with
-    | [] -> nest 2 (break 1 ^^ doc)
+    | [] -> nest 2 (d doc)
     | c :: cs ->
       !^" of " ^^ nest 2 (align (group (c ^^ concat_map field cs))
-                          ^^ break 1 ^^ doc)
+                          ^^ d doc)
   in
   match cs with
   | [] -> assert false
-  | cases ->
-    group
-      (separate_map (break 1)
-         (fun (n, vs, doc) -> group (!^"| " ^^ n ^^ args vs doc))
-         cases)
+  | [ (n, vs, doc) ] -> group (n ^^ args vs doc)
+  | (n, vs, doc) :: cases ->
+    let sep = ifflat (string " | ") (hardline ^^ string "| ") in
+    ifflat
+      (group (n ^^ args vs doc)
+       ^^ sep ^^ separate_map sep
+            (fun (n, vs, doc) -> group (n ^^ args vs doc))
+            cases)
+      (string "| " ^^ separate_map sep
+         (fun (n, vs, doc) -> group (n ^^ args vs doc))
+         ((n, vs, doc) :: cases))
            
 let format_array ?(wrap = true) items =
   let items = Array.to_list items in

@@ -1015,10 +1015,10 @@ class emitter = object (self)
           (match type_mapping with
            | Typedef (Public, def) ->
              group (!^"type" ^^^ self # format_type_params tparams ^^ !^name ^^ break 1 ^^ !^"=")
-             ^^^ self # format_value_type def
+             ^^ (nest 2 (break 1 ^^ self # format_value_type def))
            | Typedef (Private, def) ->
              group (!^"type" ^^^ self # format_type_params tparams ^^ !^name ^^ break 1 ^^ !^"= private")
-             ^^^ self # format_value_type def
+             ^^ (nest 2 (break 1 ^^ self # format_value_type def))
            | Typedef (Abstract, _) | Gen_sym | Gen_id ->
              group (!^"type" ^^^ self # format_type_params tparams ^^ !^name)
            | Format -> assert false)
