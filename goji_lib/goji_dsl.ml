@@ -218,6 +218,7 @@ let auto =
 
 (** A specific DSL to write JavaScript constants. *)
 module Const = struct
+  let nan = Const_NaN
   let int i = Const_int i
   let float f = Const_float f
   let bool b = Const_bool b
@@ -230,7 +231,9 @@ end
 (** A specific DSL to write guards as infix boolean expressions. *)
 module Guard = struct
   include Const
+  let (<>) s c = Not (Const (s, c))
   let (=) s c = Const (s, c)
+  let (!=) s s' = Not (Equals (s, s'))
   let (==) s s' = Equals (s, s')
   let not g = Not g
   let (&&) gl gr = And (gl, gr)
@@ -342,6 +345,11 @@ let tuple_fields vs =
 let option_undefined def =
   Option (Guard.(var "root" = undefined), def)
 
+(** Maps a [NaN] JavaScript value to the [None] case and maps
+    the [Some] case using the given mapping parameter. *)
+let option_nan def =
+  Option (Guard.(var "root" = nan), def)
+
 (** Maps a [null] JavaScript value to the [None] case and maps the
     [Some] case using the given mapping parameter. *)
 let option_null def =
@@ -400,6 +408,15 @@ let nonempty_list_or_null ty =
 let call ?(site = "args") sto =
   Call (sto, site)
 
+(** Executes a body within a try catch block and turns JavaScript
+    exceptions into constants. These constants can then be matched by
+    a guard, for instance to turn them into cases of an OCaml variant
+    when extracting the result. The [guard * const] list associates
+    exception types (encoded as guards, since anything can be thrown
+    in JavaScript) to their resulting constants. *)
+let try_catch ?(exns = [ Const (Var "root", Const_bool true), Const_undefined ]) body =
+  Try (body, exns)
+
 (** Calls the JavaScript [new] operator. See {!call} for more
     information. *)
 let call_constructor ?(site = "args") sto =
@@ -416,6 +433,9 @@ let call_method ?(site = "args") ?(sto = Var "this") name =
 (** Returns the value at a given JavaScript location. *)
 let get sto = Access sto
 
+(** Returns a JavaScript constant. *)
+let get_const sto = Access_const sto
+
 (** An assignment of a JavaScript constant to a given location. *)
 let set_const dst v = Set_const (dst, v)
 
@@ -425,14 +445,49 @@ let set dst src = Set (dst, src)
 (** A [let  .. in] construct. *)
 let abs name v body = Abs (name, v, body)
 
+(** A [let _ = .. in let _ = .. in ..] construct. *)
+let rec seq = function
+  | [] -> invalid_arg "Goji_dsl.seq"
+  | [ b ]  -> b
+  | b :: bs -> Abs ("_", b, seq bs)
+
 (** An [if .. then .. else] construct using a guard as condition. This
     is also the only possibility to raise an exception.  *)
 let test guard bt bf = Test (guard, bt, bf)
 
+(** An [if .. then] construct using a guard as condition. *)
+let test' guard bt = Test (guard, bt, Nop)
+
+(** Returns the value of the variable, or raises [Invalid_argument "instanceof name"]. *)
 let var_instanceof name cstr =
   test Guard.(var name = obj cstr
               || raise ("Invalid_argument \"instanceof " ^ cstr ^ "\""))
     (get (var name)) (get (var name))
+
+(** Returns the concatenation of some body expressions, undefined are dropped *)
+let concat_strings exprs =
+  let rec concat = function
+    | [] -> call ~site:"concat" (jsglobal "String.concat")
+    | e :: es ->
+      abs "_"
+        (abs "tmp" e
+           (test Guard.(var "tmp" <> undefined)
+              (set (rest ~site:"concat" ()) (var "tmp"))
+              Nop))
+        (concat es)
+  in concat exprs
+
+(** Returns the concatenation of some variables, undefined are dropped *)
+let concat_string_vars vars =
+  let rec concat = function
+    | [] -> call ~site:"concat" (jsglobal "String.concat")
+    | v :: vs ->
+      abs "_"
+        (test Guard.(var v <> undefined)
+           (set (rest ~site:"concat" ()) (var v))
+           Nop)
+        (concat vs)
+  in concat vars
 
 (** {2 Bindings} *)
 

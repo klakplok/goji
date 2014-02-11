@@ -122,9 +122,18 @@ and body =
   | Call_method of storage * string * call_site
   (** Calls a method at some JavaScript location and returns it s
       result. *)
+  | Try of body * (guard * const) list
+  (** Executes a body within a try catch block and turns JavaScript
+      exceptions into constants. These constants can then be matched
+      by a guard, for instance to turn them into cases of an OCaml
+      variant when extracting the result. The [guard * const] list
+      associates exception types (encoded as guards, since anything
+      can be thrown in JavaScript) to their resulting constants. *)
   | New of storage * call_site
   (** Calls a constructor at some JavaScript location and returns the
       allocated object. *)
+  | Access_const of const
+  (** An simple constant. *)
   | Access of storage
   (** Accesses a JavaScript location, to be used as the first
       subexpression of [Abs] or as return value. *)
@@ -196,7 +205,7 @@ and storage =
   | Global of string
   (** A global JavaScript variable. *)
   | Var of string
-  (** special cases: <root>, <this>, <...>. *)
+  (** A Goji variable *)
   | Arg of call_site * int
   (** A positional arg of a call site, write only except in callbacks. *)
   | Rest of call_site
@@ -279,6 +288,7 @@ and canceller =
 and const =
   | Const_int of int
   | Const_float of float
+  | Const_NaN
   | Const_bool of bool
   | Const_string of string
   | Const_undefined
@@ -381,8 +391,12 @@ class map = object (self)
       Call_method (self # storage s, n, self # call_site cs)
     | Call (s, cs) ->
       Call (self # storage s, self # call_site cs)
+    | Try (b, l) ->
+      Try (self # body b, List.map (fun (s, c) -> self # guard s, self # const c) l)
     | New (s, cs) ->
       New (self # storage s, self # call_site cs)
+    | Access_const s ->
+      Access_const (self # const s)
     | Access s ->
       Access (self # storage s)
     | Set_const (s, c) ->
@@ -444,6 +458,7 @@ class map = object (self)
     | Const_undefined -> Const_undefined
     | Const_object cstr -> Const_object cstr
     | Const_null -> Const_null
+    | Const_NaN -> Const_NaN
 
   method parameter (pt, n, doc, v) =
     (pt, n, self # comment doc, self # value v)
@@ -537,11 +552,16 @@ class iter = object (self)
     | Call (s, cs) ->
       self # storage s ;
       self # call_site cs
+    | Try (b, l) ->
+      self # body b ;
+      List.iter (fun (s, c) -> self # guard s ; self # const c) l
     | New (s, cs) ->
       self # storage s ;
       self # call_site cs
     | Access s ->
       self # storage s
+    | Access_const s ->
+      self # const s
     | Set_const (s, c) ->
       self # storage s ;
       self # const c

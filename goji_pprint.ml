@@ -20,9 +20,6 @@ let format_words text =
 let anest n doc =
   nesting (fun lvl -> nest (n - lvl) doc)
 
-let align doc =
-  nesting (fun lvl -> column (fun x -> nest (x - lvl) doc))
-
 let (!^!) s = !^(Printf.sprintf "%S" s)
 
 let (!^^) = format_words 
@@ -228,11 +225,27 @@ let string_of_ident (tpath, tname) =
 let format_ident ident =
   !^(string_of_ident ident)
 
+let format_infix_app op l r =
+  group (!^"(" ^^ align ((nest 2 l) ^^ break 1 ^^ op ^^ !^" " ^^ nest 2 r) ^^ !^")")
+
 let format_app ?(wrap = true) f args =
   if wrap then
     group (!^"(" ^^ align (f ^^ (nest 2 (break 1 ^^ flow (break 1) args)) ^^ !^")"))
   else
     group (align (f ^^ (nest 2 (break 1 ^^ flow (break 1) args))))
+
+let format_try arg alts =
+  group
+    (group (!^"begin try" ^^ group (nest 2 (break 1 ^^ arg) ^^^ !^"with"))
+     ^^ nest 2
+         (break 1
+          ^^ separate_map (break 1)
+              (fun (pat, v) ->
+		group (!^"| " ^^ pat
+                       ^^ if v = empty then !^" -> ()"
+			 else nest 2 (!^" ->" ^^^ v)))
+	      alts)
+     ^^^ !^"end")
 
 let format_ass r v =
   group (align (r ^^ !^" :=" ^^ (nest 2 (break 1 ^^ v))))
@@ -242,14 +255,14 @@ type sequence_item =
 | Semicolon of document
 | Last of document
 
-let format_sequence seq =
+let format_sequence ?(allow_empty = true) seq =
   let rec loop acc seq =
     match seq with
-    | [] -> empty
+    | [] -> if allow_empty then empty else !^"()"
     | [ Last i ] -> group (group acc ^^ group i)
     | [ No_semicolon i ] -> group (group acc ^^ group i ^^^ !^"()")
     | [ Semicolon i ] -> group (group acc ^^ group i)
-    | Last _ :: tl -> invalid_arg "format_sequence"
+    | Last i :: tl -> invalid_arg "format_sequence"
     | No_semicolon i :: tl ->
       loop (group (acc ^^ group i)) tl
     | Semicolon i :: tl -> 

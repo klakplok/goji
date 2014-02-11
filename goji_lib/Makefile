@@ -18,10 +18,10 @@ goji_lib.cmxa: $(patsubst %.ml, %.cmx, $(SOURCES))
 	ocamlfind ocamlopt -a -g -package dynlink,str $^ -o goji_lib.cmxa
 
 %.cmx: %.ml
-	ocamlfind ocamlopt -package pprint -c $<
+	ocamlfind ocamlopt -g -package pprint -c $<
 
 %.cmo: %.ml
-	ocamlfind ocamlc -package pprint -c $<
+	ocamlfind ocamlc -g -package pprint -c $<
 
 %.cmi: %.mli
 	ocamlfind ocamlc -package pprint -c $<

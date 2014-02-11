@@ -68,8 +68,12 @@ let js_undefined = js_constant "undefined"
 
 let js_null = js_constant "null"
 
+let js_nan = js_constant "NaN"
+
 external js_instanceof : any -> any -> bool = "caml_js_instanceof"
 
+let js_is_nan o =
+  js_call (js_symbol "isNaN") [| o |] |> js_to_bool
 
 (* Conversions from OCaml to JavaScript *************************************)
 
