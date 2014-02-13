@@ -197,6 +197,18 @@ let callback params ret =
 let event ?(canceller = Manual_canceller) params ret =
   Value (Handler (params, ret, canceller), Var "root")
 
+(** A list of tags phantom type. To be used only in type parameters.
+    Compiled to a fixed polymorphic variant type. *)
+let tags ls = Tags (ls, None)
+
+(** A list of tags phantom type. To be used only in type parameters.
+    Compiled to an open polymorphic variant type [[> .. ]]. *)
+let tags_min ls = Tags (ls, Some Covariant)
+
+(** A list of tags phantom type. To be used only in type parameters.
+    Compiled to a bounded polymorphic variant type [[< .. ]]. *)
+let tags_max ls = Tags (ls, Some Contravariant)
+
 (** Wraps the code to cancel an event handler. How this code is made
     available depends on the event handling backend.  The canceller
     [body] is generated after the body of the binding. In this
@@ -261,11 +273,14 @@ let var n = Var n
 (** A global JavaScript variable. *)
 let global str = jsglobal str
 
-(** A named field accessor in a JavaScript object. *)
-let field root n = Field (root, n)
+(** A name field accessor in a JavaScript object. *)
+let field root n = Field (root, Volatile (Const_string n))
 
-(** A field accessor in a JavaScript array. *)
-let cell root n = Cell (root, n)
+(** An index field accessor in a JavaScript array. *)
+let cell root n = Field (root, Volatile (Const_int n))
+
+(** A generic field accessor in a JavaScript object. *)
+let acc root n = Field (root, n)
 
 (** A positional argument, by default of the call site [args]. Write
     only in bodies, read only in callbacks. *)
@@ -298,12 +313,12 @@ let rec reroot v ns =
                  (n, reroot_guard g ns,
 		  List.map (fun v -> reroot v ns) vs, c))
                cases)
+  | Tags _ as c -> c
 and reroot_storage sto ns =
   match sto with
   | Var "root" -> ns (* all this code for this... *)
-  | Field (s, n) -> Field (reroot_storage s ns, n)
-  | Cell (s, i) -> Cell (reroot_storage s ns, i)
-  | Var _ | Arg _ | Rest _ | Unroll _ | Global _  as s -> s
+  | Field (s, s') -> Field (reroot_storage s ns, reroot_storage s' ns)
+  | Volatile _ | Var _ | Arg _ | Rest _ | Unroll _ | Global _  as s -> s
 and reroot_guard g ns =
   match g with
   | Const (s, c) -> Const (reroot_storage s ns, c)
@@ -434,10 +449,10 @@ let call_method ?(site = "args") ?(sto = Var "this") name =
 let get sto = Access sto
 
 (** Returns a JavaScript constant. *)
-let get_const sto = Access_const sto
+let get_const sto = Access (Volatile sto)
 
 (** An assignment of a JavaScript constant to a given location. *)
-let set_const dst v = Set_const (dst, v)
+let set_const dst v = Set (dst, Volatile v)
 
 (** An imperative assignment to a location from another. *)
 let set dst src = Set (dst, src)

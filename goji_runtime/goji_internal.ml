@@ -193,15 +193,8 @@ let ensure_block_arg args idx =
   else v
 
 let ensure_block_field o f =
-  let v = js_get o f in
+  let v = js_get_any o f in
   if js_equals (js_constant "undefined") v then
     let b = js_obj [| |] in
-    js_set o f b ; b
-  else v
-
-let ensure_block_cell o i =
-  let v = js_get_any o (js_of_int i) in
-  if js_equals (js_constant "undefined") v then
-    let b = js_obj [| |] in
-    js_set_any o (js_of_int i) b ; b
+    js_set_any o f b ; b
   else v

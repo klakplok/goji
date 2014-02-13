@@ -95,7 +95,7 @@ and visibility =
     Value case. *)
 and value =
   | Value of mapping * storage
-  (** Maps an OCaml sub-value to the accessor to its JavaScript
+  (** Maps an OCaml sub-value to the accessor of its JavaScript
       counterpart by describing where it is located in the JavaScript
       context (type {!storage}) and how to perform the conversion
       (type {!mapping}). *)
@@ -112,6 +112,9 @@ and value =
   (** Associates different mappings to the cases of an OCaml sum
       type. When converting from JavaScript, the first case whose
       {!guard} is true is selected. *)
+  | Tags of string list * variance option
+  (** A list of tags using polymorphic variants.
+      To be used only as phantom flags. *)
 
 (** The body of a function / method binding. *)
 and body = 
@@ -132,17 +135,11 @@ and body =
   | New of storage * call_site
   (** Calls a constructor at some JavaScript location and returns the
       allocated object. *)
-  | Access_const of const
-  (** An simple constant. *)
   | Access of storage
   (** Accesses a JavaScript location, to be used as the first
       subexpression of [Abs] or as return value. *)
   | Inject of path * value
   (** Inject the value in an OCaml variable in the JavaScript context. *)
-  | Set_const of storage * const
-  (** Stores a constant at a JavaScript location, returns a void
-      result, useful for writing complex setters or insert phantom
-      parameters in call sites. *)
   | Set of storage * storage
   (** Stores the current content of a JavaScript location to anotther
       one, returns a void result, useful for writing complex setters
@@ -215,10 +212,10 @@ and storage =
   (** Makes sense (only) when associated with a JavaScript
       array. Unrolls the collection after all other positional
       arguments and already pushed optional arguments. *)
-  | Field of storage * string
+  | Field of storage * storage
   (** A field in a JavaScript object. *)
-  | Cell of storage * int
-  (** A field in a JavaScript array. *)
+  | Volatile of const
+  (** A JavaScript constant, useful for indexing or to create values on the fly. *)
 
 (** Low level description of mappings. *)
 and mapping =
@@ -385,6 +382,7 @@ class map = object (self)
 		 (fun (s, g, v, doc) ->
 		    (s, self # guard g, List.map (self # value) v, self # comment doc))
 		 cases)
+    | Tags (ns, v) -> Tags (ns, v)
 
   method body = function 
     | Call_method (s, n, cs) ->
@@ -395,12 +393,8 @@ class map = object (self)
       Try (self # body b, List.map (fun (s, c) -> self # guard s, self # const c) l)
     | New (s, cs) ->
       New (self # storage s, self # call_site cs)
-    | Access_const s ->
-      Access_const (self # const s)
     | Access s ->
       Access (self # storage s)
-    | Set_const (s, c) ->
-      Set_const (self # storage s, self # const c)
     | Set (s, s') ->
       Set (self # storage s, self # storage s')
     | Inject (n, v) ->
@@ -431,7 +425,7 @@ class map = object (self)
     | Arg (cs, i) -> Arg (self # call_site cs, i)
     | Rest c -> Rest (self # call_site c)
     | Field (s, n) -> Field (self # storage s, n)
-    | Cell (s, i) -> Cell (self # storage s, i)
+    | Volatile c -> Volatile (self #const c)
 
   method mapping = function
     | Int | String | Bool | Float | Any | Void as t -> t
@@ -544,6 +538,7 @@ class iter = object (self)
 	   List.iter (self # value) v ;
 	   self # comment doc)
 	cases
+    | Tags (ns, v) -> ()
 
   method body = function 
     | Call_method (s, n, cs) ->
@@ -560,11 +555,6 @@ class iter = object (self)
       self # call_site cs
     | Access s ->
       self # storage s
-    | Access_const s ->
-      self # const s
-    | Set_const (s, c) ->
-      self # storage s ;
-      self # const c
     | Set (s, s') ->
       self # storage s ;
       self # storage s'
@@ -598,7 +588,7 @@ class iter = object (self)
     | Rest c -> self # call_site c
     | Unroll c -> self # call_site c
     | Field (s, n) -> self # storage s
-    | Cell (s, i) -> self # storage s
+    | Volatile c -> self #const c
 
   method mapping = function
     | Int | String | Bool | Float | Any | Void -> ()

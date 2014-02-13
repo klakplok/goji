@@ -65,8 +65,7 @@ end = struct
       | _, Let (_, _, rv) ->
 	document_ref rv
     with Not_found ->
-      warning "undefined %s variable %S" t n ;
-      !^"ANAL"
+      error "undefined %s variable %S" t n
 
   let exists_var n vars =
     try
@@ -238,6 +237,15 @@ class emitter = object (self)
       (if sa then !^"(" else empty)
       ^^ align (self # format_fun_type params ret)
       ^^ (if sa then !^")" else empty)
+    | Tags ([], variance) ->
+      error "empty tag list"
+    | Tags (l, variance) ->
+      let format_one t = !^"`" ^^ !^(String.uppercase t) in
+      let formatted = separate_map !^" | " format_one l in
+      match variance with
+      | None -> !^"[ " ^^ formatted ^^ !^" ]"
+      | Some Covariant -> !^"[> " ^^ formatted ^^ !^" ]"
+      | Some Contravariant -> !^"[< " ^^ formatted ^^ !^" ]"
 
   (** Constructs the OCaml arrow type from the defs of parameters and
       return value. Does not put surrounding parentheses. *)
@@ -309,10 +317,19 @@ class emitter = object (self)
 
   (* Injection methods ********************************************************)
 
-  method format_injector_definition name def =
+  method format_injector_definition tparams name def =
     let env, var = Env.(def_ocaml_var "obj" empty) in
+    let env, iparams =
+      List.fold_left
+        (fun (env, ps) (_, n) ->
+           let env, p = Env.(def_ocaml_var ~used:true ("inject_tp_" ^ n) env) in
+           env, p :: ps)
+        (env, []) tparams
+    in
+    let params = separate (break 1) (iparams @ [ var ]) in
     let env, body = self # format_injector_body "obj" def env in
-    let res = format_let (!^("inject_" ^ name) ^^^ var) body in
+    (* FIXME: do something with params ? *)
+    let res = format_let (!^("inject_" ^ name) ^^^ params) body in
     Env.warn_unused env ; res
 
   method format_injector_body var def env =
@@ -440,6 +457,9 @@ class emitter = object (self)
     | Value (leaf, sto) ->
       let env, arg = self # format_leaf_injector v leaf env in
       self # format_storage_assignment arg sto env
+    | Tags _ ->
+      (* FIXME: warning "tags conmbinator used in a non phantom position" ;*)
+      self # format_injector ~path v (Value (Param "a",Var "root")) env
 
   method format_guard_injector g env =
     let rec collect = function
@@ -573,7 +593,7 @@ class emitter = object (self)
 	let body = format_app ~wrap:false !^"Goji_internal.js_set_global" [ !^!n ; arg ] in
 	env, seq_instruction body
       | Var n ->
-	let env, v = Env.let_goji_var n arg env in
+	let env, v = Env.let_goji_var ~ro:true n arg env in
 	env, seq_instruction' v
       | Arg (cs, n) ->
 	env,
@@ -584,20 +604,23 @@ class emitter = object (self)
       | Rest cs ->
 	env,
 	seq_instruction (format_app ~wrap:false !^"Goji_internal.push_arg" [ !^(cs ^ "'A") ; arg ])
-      | Field (sto, n) ->
+      | Field (sto, Volatile (Const_string n)) ->
 	let preq, env, blo = nested sto env in
 	env,
 	preq
 	@ (seq_instruction (format_app ~wrap:false !^"Goji_internal.js_set" [ blo ; !^!n ; arg ]))
-      | Cell (sto, i) ->
+      | Field (sto, field) ->
 	let preq, env, blo = nested sto env in
 	env,
 	preq 
         @ (seq_instruction
 	     (format_app ~wrap:false
 		!^"Goji_internal.js_set_any "
-		[ blo ;
-		  !^"(Goji_internal.js_of_int" ^^^ !^(string_of_int i) ^^ !^")" ;arg ]))
+		[ blo ; self # format_storage_access field env ; arg ]))
+      | Volatile _ ->
+        warning "assignment of a volatile JavaScript value" ;
+        env, seq_instruction (format_app ~wrap:false !^"ignore " [ arg ])
+
     and nested sto env =
       match sto with
       | Rest cs ->
@@ -625,21 +648,30 @@ class emitter = object (self)
 	slet, env, Env.use_goji_var n env
       | Arg (cs, n) ->
         [], env, format_app !^"Goji_internal.ensure_block_arg" [ !^(cs ^ "'A") ; int n ]
-      | Field (sto, n) ->
+      | Field (sto, field) ->
 	let preq, env, res = nested sto env in
-        preq, env, format_app !^"Goji_internal.ensure_block_field" [ res ; !^!n ]
-      | Cell (sto, i) ->
-	let preq, env, res = nested sto env in
-        preq, env, format_app !^"Goji_internal.ensure_block_cell" [ res ; int i ]
+        let field = self # format_storage_access field env in
+        preq, env, format_app !^"Goji_internal.ensure_block_field" [ res ; field ]
+      | Volatile c ->
+        [], env, self # format_const c
     in toplevel sto
 
   (* Extraction methods *******************************************************)
 
-  method format_extractor_definition name def =
+  method format_extractor_definition tparams name def =
     let env, decl = Env.(def_goji_var "root" empty) in
+    let env, iparams =
+      List.fold_left
+        (fun (env, ps) (_, n) ->
+           let env, p = Env.(def_ocaml_var ~used:true ("extract_tp_" ^ n) env) in
+           env, p :: ps)
+        (env, []) tparams
+    in
+    (* FIXME: do something with params ? *)
+    let params = separate (break 1) (iparams @ [ decl ]) in
     let env, body = self # format_extractor_body def env in
     Env.warn_unused env ;
-    format_let (!^("extract_" ^ name) ^^^ decl) body
+    format_let (!^("extract_" ^ name) ^^^ params) body
 
   method format_extractor_body def env =
     self # format_extractor def env
@@ -705,6 +737,9 @@ class emitter = object (self)
     | Value (leaf, sto) ->
       let arg = self # format_storage_access sto env in
       env, self # format_leaf_extractor leaf arg env
+    | Tags _ ->
+      (* FIXME: warning "tags conmbinator used in a non phantom position" ; *)
+      self # format_extractor (Value (Param "a",Var "root")) env
 
   method format_leaf_extractor leaf arg env =
     match leaf with
@@ -736,9 +771,7 @@ class emitter = object (self)
 	  arg ]
     | Param _ ->
       (* At this point, it is a free variable so the value is passed as is *)
-      format_app
-        !^"Goji_internal.extract_identity"
-        [ arg ]
+      format_app !^"Goji_internal.extract_identity" [ arg ]
     | Abbrv ((params, (path, name)), (Default | Extern _ as mode)) ->
       let extract = match mode with Default -> (path, "extract_" ^ name) | Extern (_, e) -> e | _ -> assert false in
       let local, decl = Env.def_goji_var "root" env in
@@ -785,15 +818,12 @@ class emitter = object (self)
     | Arg _ -> failwith "error 1458"
     | Rest _ -> failwith "error 1459"
     | Unroll _ -> failwith "error 1457"
-    | Field (sto, n) ->
+    | Field (sto, field) ->
       format_app
-	!^"Goji_internal.js_get"
-	[ self # format_storage_access sto env ; !^!n ]
-    | Cell (sto, i) ->
-      format_app
-	!^"Goji_internal.js_get_any "
+	!^"Goji_internal.js_get_any"
 	[ self # format_storage_access sto env ;
-	  !^"Goji_internal.js_of_int " ^^ int i ]
+          self # format_storage_access field env ]
+    | Volatile c -> self # format_const c
 
   (** Constructs a JavaScript value from a constant litteral *)
   method format_const = function
@@ -874,19 +904,19 @@ class emitter = object (self)
       match type_mapping with
       | Typedef (vis, def) ->
         format_hidden
-          (self # format_injector_definition name def
+          (self # format_injector_definition tparams name def
            ^^ hardline
-           ^^ self # format_extractor_definition name def)
+           ^^ self # format_extractor_definition tparams name def)
       | Gen_sym ->
         format_hidden
-          (self # format_injector_definition name (Value (String, Var "root"))
+          (self # format_injector_definition tparams name (Value (String, Var "root"))
            ^^ hardline
-           ^^ self # format_extractor_definition name  (Value (String, Var "root")))
+           ^^ self # format_extractor_definition tparams name  (Value (String, Var "root")))
       | Gen_id ->
         format_hidden
-          (self # format_injector_definition name (Value (Int, Var "root"))
+          (self # format_injector_definition tparams name (Value (Int, Var "root"))
            ^^ hardline
-           ^^ self # format_extractor_definition name  (Value (Int, Var "root")))
+           ^^ self # format_extractor_definition tparams name (Value (Int, Var "root")))
       | Format -> failwith "format not implemented" ]
 
   method format_method_definition (_, (tpath, tname) as abbrv) name params body ret doc =
@@ -1025,11 +1055,6 @@ class emitter = object (self)
       let res = self # format_storage_access sto env in
       let env, res = Env.let_goji_var "result" ~ro:false res env in
       env, seq_instruction' res
-    | Access_const c ->
-      env, seq_instruction (self # format_const c)
-    | Set_const (dst, src) ->
-      let c = (self # format_const src) in
-      self # format_storage_assignment c dst env
     | Set (dst, src) ->
       let c = (self # format_storage_access src env) in
       self # format_storage_assignment c dst env
@@ -1092,7 +1117,7 @@ class emitter = object (self)
     let collect l =
       let rec collect = function
         | Call_method (_, _, cs) | Call (_, cs) | New (_, cs) -> [ cs ]
-        | Access _ | Access_const _ | Nop | Inject _ | Set_const _ | Set _ -> []
+        | Access _| Nop | Inject _ | Set _ -> []
         | Test (_, b1, b2) | Abs (_, b1, b2) -> collect b1 @ collect b2
         | Try (b, _) -> collect b
       in
@@ -1155,14 +1180,27 @@ class emitter = object (self)
 	     abbrv)
       | Format -> assert false
     ] @ [
+      let params_injectors =
+        List.map
+          (fun (_, n) ->
+             let fun_ty = Callback ([ Curry, "_", Nodoc, Value (Param n, Var "root") ], any) in
+             (Curry, ("inject_tp_" ^ n), Nodoc, Value (fun_ty, Var "root")))
+          tparams
+      and params_extractors =
+        List.map
+          (fun (_, n) ->
+             let fun_ty = Callback ([ Curry, "_", Nodoc, any ], Value (Param n, Var "root")) in
+             (Curry, ("extract_tp_" ^ n), Nodoc, Value (fun_ty, Var "root")))
+          tparams
+      in
       format_hidden
         (format_val
 	   !^("inject_" ^ name)
-	   (self # format_fun_type [ Curry, "_", Nodoc, abbrv ] any)
+	   (self # format_fun_type (params_injectors @ [ Curry, "_", Nodoc, abbrv ]) any)
          ^^ hardline
 	 ^^ format_val
 	   !^("extract_" ^ name)
-	   (self # format_fun_type [ Curry, "_", Nodoc, any ] abbrv)) ]
+	   (self # format_fun_type (params_extractors @ [ Curry, "_", Nodoc, any ]) abbrv)) ]
 
   method format_method_interface (_, (tpath, tname) as abbrv) name params ret doc =
     let params =

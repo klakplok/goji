@@ -212,7 +212,7 @@ let format_exception name ?(doc = empty) args =
        ^^ if args = [] then
            empty
          else
-           break 1 ^^ !^"of" ^^ break 1
+           break 1 ^^ !^":" ^^ break 1
            ^^ separate (break 1 ^^ !^"*" ^^ break 1) args)
       
 let format_phrases items =

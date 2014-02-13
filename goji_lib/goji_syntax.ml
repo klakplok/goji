@@ -62,7 +62,7 @@ let parse_js_global js =
   | [] -> invalid_arg "Goji_syntax.parse_js_global"
   | glo :: path ->
     List.fold_left
-      (fun r f -> Field (r, f))
+      (fun r f -> Field (r, Volatile (Const_string f)))
       (Global glo)
       path
 
