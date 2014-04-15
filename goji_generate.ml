@@ -50,7 +50,7 @@ let compute_depends package =
   uniq [] (List.sort String.compare !accu)
 
 (** Build the Makefile. *)
-let generate_makefiles base_dir package =
+let generate_makefiles base_dir package js_present =
   let open Goji_registry in
   let fp_makefile = open_out (base_dir ^ "/Makefile") in
   let out fmt = Printf.fprintf fp_makefile fmt in
@@ -89,9 +89,10 @@ let generate_makefiles base_dir package =
        \tif [ ! -e doc ] ; then mkdir doc ; fi\n\
        \tocamlfind ocamldoc -html -d doc -package $(DEPENDS) $(MLIS)\n" ;
   out "install:\n\
-       \tocamlfind install %s META %s.cma $(CMIS)\n"
+       \tocamlfind install %s META %s.cma $(CMIS)%S\n"
     package.package_name
-    package.package_name;
+    package.package_name
+    (if js_present then " goji_jslib_" ^ package.package_name ^ ".zip" else "") ;
   out "uninstall:\n\
        \tocamlfind remove %s\n"
     package.package_name ;
@@ -118,7 +119,8 @@ let generate_metas base_dir package =
   out "exists_if = \"%s.cma\"\n" package.package_name ;
   close_out fp_meta
 
-(** Builds the local JavaScript archive. *)
+(** Builds the local JavaScript archive,
+    returns false if no file has been generated *)
 let grab_javascript_sources base_dir package =
   let open Goji_registry in
   (* obtain and format library *)
@@ -141,7 +143,8 @@ let grab_javascript_sources base_dir package =
 	   package.package_name c.name)
     package ;
   (* create archive (or purge if no file is present) *)
-  if Sys.file_exists (js_dir ^ "/" ^ "goji_entry.js") then
+  let js_present = Sys.file_exists (js_dir ^ "/" ^ "goji_entry.js") in
+  if js_present then
     Goji_messages.ensure
       (Sys.command ("zip -q -r " ^ js_archive ^ " " ^ js_dir ^ "/") = 0)
       "cannot create archive for %S, calling zip reported an error"
@@ -150,7 +153,8 @@ let grab_javascript_sources base_dir package =
     Goji_messages.warning
       "cannot remove temporary files for %S, calling rm reported an error"
       package.package_name ;
-  Sys.chdir prev_wd
+  Sys.chdir prev_wd ;
+  js_present
 
 (** Main entry point of the [generate] command *)
 let main base_dir fix_case reorder_params event_backend packages  =
@@ -168,7 +172,7 @@ let main base_dir fix_case reorder_params event_backend packages  =
   Goji_registry.iter_packages
     (fun package ->
       let package_base_dir = make_package_dir base_dir package in
+      let js_present = grab_javascript_sources package_base_dir package in
       generate_sources package_base_dir package ;
-      generate_makefiles package_base_dir package ;
-      generate_metas package_base_dir package ;
-      grab_javascript_sources package_base_dir package)
+      generate_makefiles package_base_dir package js_present ;
+      generate_metas package_base_dir package)
