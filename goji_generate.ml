@@ -88,7 +88,7 @@ let generate_makefiles base_dir package js_present =
   out "doc: *.mli\n\
        \tif [ ! -e doc ] ; then mkdir doc ; fi\n\
        \tocamlfind ocamldoc -html -d doc -package $(DEPENDS) $(MLIS)\n" ;
-  out "install:\n\
+  out "install: all\n\
        \tocamlfind install %s META %s.cma $(CMIS)%s\n"
     package.package_name
     package.package_name
