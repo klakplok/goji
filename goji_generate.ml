@@ -89,7 +89,7 @@ let generate_makefiles base_dir package js_present =
        \tif [ ! -e doc ] ; then mkdir doc ; fi\n\
        \tocamlfind ocamldoc -html -d doc -package $(DEPENDS) $(MLIS)\n" ;
   out "install:\n\
-       \tocamlfind install %s META %s.cma $(CMIS)%S\n"
+       \tocamlfind install %s META %s.cma $(CMIS)%s\n"
     package.package_name
     package.package_name
     (if js_present then " goji_jslib_" ^ package.package_name ^ ".zip" else "") ;
