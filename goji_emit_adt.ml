@@ -128,7 +128,7 @@ end = struct
     (ovars, SM.remove n gvars, SM.remove n gflags)
 
   let let_goji_var ?(used = false) ?(ro = false) ?(block = false) n v (ovars, gvars, gflags) =
-    (try if fst (SM.find n gflags) then
+    (try if fst (SM.find n gflags) && n <> "result" then
 	 error "trying to assign read-only Goji variable %S" n
      with Not_found -> ());
     let gvars, res = let_var "Goji" n v gvars in
@@ -333,9 +333,9 @@ class emitter = object (self)
     Env.warn_unused env ; res
 
   method format_injector_body var def env =
-    let def = Goji_dsl.(def @@ Var "res") in
+    let def = Goji_dsl.(def @@ Var "result") in
     let env, code = self # format_injector var def env in
-    let body = code @ seq_result (Env.use_goji_var "res" env) in
+    let body = code @ seq_result (Env.use_goji_var "result" env) in
     env, format_sequence body
 
   method format_arguments_injection params env =
