@@ -27,6 +27,12 @@ HOWTO start writing your first library binding
 
  - Build and install Goji. This installs a `goji` command and two
    OCamlFind packages: `goji_lib` and `goji_runtime`.
+   Among others, Goji depends on the pprint package. The pprint package
+   is available in opam (http://opam.ocaml.org/). However, Goji
+   does not build with the latest version
+   (see https://github.com/klakplok/goji/issues/1). As a workaround,
+   you can pin pprint to the version 20130324 like that
+     opam pin pprint 20130324.
  - Bindings descriptions must be defined in OCaml source files, using
    binding description pimitives provided by the `goji_lib` package.
    In other words, you use predefined OCaml functions and types to
