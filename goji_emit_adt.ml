@@ -609,6 +609,12 @@ class emitter = object (self)
 	env,
 	preq
 	@ (seq_instruction (format_app ~wrap:false !^"Goji_internal.js_set" [ blo ; !^!n ; arg ]))
+      | Field (sto, Volatile (Const_int n)) ->
+	let preq, env, blo = nested ~array:true sto env in
+	env,
+	preq
+        @ (seq_instruction (format_app ~wrap:false !^"Goji_internal.js_set_any"
+                              [ blo ; format_app !^"Goji_internal.js_of_int" [ !^(string_of_int n) ] ; arg ]))
       | Field (sto, field) ->
 	let preq, env, blo = nested sto env in
 	env,
@@ -621,25 +627,31 @@ class emitter = object (self)
         warning "assignment of a volatile JavaScript value" ;
         env, seq_instruction (format_app ~wrap:false !^"ignore " [ arg ])
 
-    and nested sto env =
+    and nested ?(array = false) sto env =
       match sto with
       | Rest cs ->
 	error "indirect assignment of rest not supported"
       | Unroll cs ->
 	error "indirect assignment of unroll not supported"
       | Global n ->
-        [], env, format_app !^"Goji_internal.ensure_block_global" [ !^!n ]
+        [], env, format_app
+          !^(if array then "Goji_internal.ensure_array_global"
+             else "Goji_internal.ensure_obj_global")
+          [ !^!n ]
       | Var n ->
 	let env, slet =
 	  if Env.(not (exists_goji_var n env)) then
 	    let env, rlet =
-	      Env.let_goji_var ~block:true n !^"(Goji_internal.js_obj [| |])" env
-	    in env, seq_instruction' rlet
-	  else if Env.(not (is_ro n env || is_block n env)) then
+              Env.let_goji_var ~block:true n
+                !^(if array then "(Goji_internal.js_of_array [| |])"
+                   else "(Goji_internal.js_obj [| |])") env
+            in env, seq_instruction' rlet
+          else if Env.(not (is_ro n env || is_block n env)) then
 	    let env, rlet =
 	      Env.let_goji_var ~block:true n
 		(format_app
-		   !^"Goji_internal.ensure_block_var"
+                   !^(if array then "Goji_internal.ensure_array_var"
+                      else "Goji_internal.ensure_obj_var")
 		   [ Env.use_goji_var n env ])
 		env
 	    in env, seq_instruction' rlet
@@ -647,11 +659,17 @@ class emitter = object (self)
 	in
 	slet, env, Env.use_goji_var n env
       | Arg (cs, n) ->
-        [], env, format_app !^"Goji_internal.ensure_block_arg" [ !^(cs ^ "'A") ; int n ]
+        [], env, format_app
+          !^(if array then "Goji_internal.ensure_array_arg"
+             else "Goji_internal.ensure_obj_arg")
+          [ !^(cs ^ "'A") ; int n ]
       | Field (sto, field) ->
 	let preq, env, res = nested sto env in
         let field = self # format_storage_access field env in
-        preq, env, format_app !^"Goji_internal.ensure_block_field" [ res ; field ]
+        preq, env, format_app
+          !^(if array then "Goji_internal.ensure_array_field"
+             else "Goji_internal.ensure_obj_field")
+          [ res ; field ]
       | Volatile c ->
         [], env, self # format_const c
     in toplevel sto

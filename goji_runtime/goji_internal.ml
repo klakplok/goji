@@ -173,28 +173,54 @@ let build_args args =
 
 (* Dynamic allocation of blocks during injections ****************************)
 
-let ensure_block_global n =
+let ensure_obj_global n =
   let v = js_global n in
   if js_equals (js_constant "undefined") v then
     let b = js_obj [| |] in
     js_set_global n b ; b
   else v
 
-let ensure_block_var res =
+let ensure_obj_var res =
   if js_equals (js_constant "undefined") res then
     js_obj [| |]
   else res
 
-let ensure_block_arg args idx =
+let ensure_obj_arg args idx =
   let v = args.args.(idx) in
   if js_equals (js_constant "undefined") v then
     let b = js_obj [| |] in
     args.args.(idx) <- b ; b
   else v
 
-let ensure_block_field o f =
+let ensure_obj_field o f =
   let v = js_get_any o f in
   if js_equals (js_constant "undefined") v then
     let b = js_obj [| |] in
+    js_set_any o f b ; b
+  else v
+
+let ensure_array_global n =
+  let v = js_global n in
+  if js_equals (js_constant "undefined") v then
+    let b = js_of_array [| |] in
+    js_set_global n b ; b
+  else v
+
+let ensure_array_var res =
+  if js_equals (js_constant "undefined") res then
+    js_of_array [| |]
+  else res
+
+let ensure_array_arg args idx =
+  let v = args.args.(idx) in
+  if js_equals (js_constant "undefined") v then
+    let b = js_of_array [| |] in
+    args.args.(idx) <- b ; b
+  else v
+
+let ensure_array_field o f =
+  let v = js_get_any o f in
+  if js_equals (js_constant "undefined") v then
+    let b = js_of_array [| |] in
     js_set_any o f b ; b
   else v
