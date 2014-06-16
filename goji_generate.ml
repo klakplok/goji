@@ -15,17 +15,13 @@ let generate_sources base_dir package =
        let base_name = String.copy component.name in
        base_name.[0] <- Char.lowercase base_name.[0] ;
        let full_base_name = base_dir ^ "/" ^ base_name in
-       let emitter =
-	 (* TODO: options *)
-	 new Goji_emit_adt.emitter
-       in
        (* generate ml *)
        let fp_impl = open_out (full_base_name ^ ".ml") in
-       Goji_emit_struct.emit_implementation emitter fp_impl component ;
+       Goji_emit_struct.emit_implementation fp_impl component ;
        close_out fp_impl ;
        (* generate mli *)
        let fp_intf = open_out (full_base_name ^ ".mli") in
-       Goji_emit_struct.emit_interface emitter fp_intf component ;
+       Goji_emit_struct.emit_interface fp_intf component ;
        close_out fp_intf)
     package
 

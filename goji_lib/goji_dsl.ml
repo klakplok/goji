@@ -197,17 +197,21 @@ let callback params ret =
 let event ?(canceller = Manual_canceller) params ret =
   Value (Handler (params, ret, canceller), Var "root")
 
-(** A list of tags phantom type. To be used only in type parameters.
-    Compiled to a fixed polymorphic variant type. *)
-let tags ls = Tags (ls, None)
+(** A fixed list of tags phantom type. To be used only in type
+    parameters.  Compiled to a fixed polymorphic variant type. *)
+let tags ls = Tags (ls, Some [])
 
 (** A list of tags phantom type. To be used only in type parameters.
     Compiled to an open polymorphic variant type [[> .. ]]. *)
-let tags_min ls = Tags (ls, Some Covariant)
+let tags_min ls = Tags (ls, None)
 
 (** A list of tags phantom type. To be used only in type parameters.
     Compiled to a bounded polymorphic variant type [[< .. ]]. *)
-let tags_max ls = Tags (ls, Some Contravariant)
+let tags_max ls = Tags ([], Some ls)
+
+(** A list of tags phantom type. To be used only in type parameters.
+    Compiled to a fixed polymorphic variant type. *)
+let tags_range req pos = Tags (req, Some pos)
 
 (** Wraps the code to cancel an event handler. How this code is made
     available depends on the event handling backend.  The canceller

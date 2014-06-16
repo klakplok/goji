@@ -11,6 +11,40 @@ open Goji_pprint
 open Goji_messages
 open Goji_ast
 
+let format_type_definition
+  : (variance option * string) list -> string -> typedef -> comment -> impl list
+  = fun _ -> assert false
+let format_method_definition
+  : abbrv -> string -> parameter list -> body -> value -> comment -> impl list
+  = fun _ -> assert false
+let format_function_definition
+  : string -> parameter list -> body -> value -> comment -> impl list
+  = fun _ -> assert false
+let format_value_definition
+  : string -> body -> value -> comment -> impl list
+  = fun _ -> assert false
+let format_inherits_definition
+  : string -> abbrv -> abbrv -> comment -> impl list
+  = fun _ -> assert false
+
+let format_type_interface
+  : (variance option * string) list -> string -> typedef -> comment -> intf list
+  = fun _ -> assert false
+let format_method_interface
+  : abbrv -> string -> parameter list -> value -> comment -> intf list
+  = fun _ -> assert false
+let format_function_interface
+  : string -> parameter list -> value -> comment -> intf list
+  = fun _ -> assert false
+let format_value_interface
+  : string -> value -> comment -> intf list
+  = fun _ -> assert false
+let format_inherits_interface
+  : string -> abbrv -> abbrv -> comment -> intf list
+  = fun _ -> assert false
+
+(*
+
 (** Ad-hoc compilation environment to track the used of variables in
     order to emit warnings / errors, produce nicer code, and maybe
     other stuff in the future. *)
@@ -237,15 +271,24 @@ class emitter = object (self)
       (if sa then !^"(" else empty)
       ^^ align (self # format_fun_type params ret)
       ^^ (if sa then !^")" else empty)
-    | Tags ([], variance) ->
+    | Tags (req, pos) ->
+      self # format_tags req pos
+
+  (** Constructs a polymorphic variant type from tags *)
+  method format_tags req pos =
+    let format_tag t = !^"`" ^^ !^(String.uppercase t) in
+    let format_tags ts = separate_map !^" | " format_tag ts in
+    match req, pos with
+    | [], None ->
       error "empty tag list"
-    | Tags (l, variance) ->
-      let format_one t = !^"`" ^^ !^(String.uppercase t) in
-      let formatted = separate_map !^" | " format_one l in
-      match variance with
-      | None -> !^"[ " ^^ formatted ^^ !^" ]"
-      | Some Covariant -> !^"[> " ^^ formatted ^^ !^" ]"
-      | Some Contravariant -> !^"[< " ^^ formatted ^^ !^" ]"
+    | [], Some pos ->
+      !^"[< " ^^ format_tags pos ^^ !^" ]"
+    | req, None ->
+      !^"[> " ^^ format_tags req ^^ !^" ]"
+    | req, Some [] ->
+      !^"[ " ^^ format_tags req ^^ !^" ]"
+    | req, Some pos ->
+      !^"[< " ^^ format_tags (req @ pos) ^^ !^ " > " ^^ format_tags req ^^ !^" ]"
 
   (** Constructs the OCaml arrow type from the defs of parameters and
       return value. Does not put surrounding parentheses. *)
@@ -275,6 +318,8 @@ class emitter = object (self)
   (** Construct the coment block for a function, with the provided
       doc, a call example and the list of parameters. *)
   method format_function_doc fdoc name params =
+    (* (* OCamlDoc is broken, the following should be better,
+       but the tool ignores some of the arguments... *)
     let max =
       List.fold_left
 	(fun r (_, name, _, _) -> max (String.length name) r)
@@ -285,7 +330,7 @@ class emitter = object (self)
       String.blit str 0 res 0 (String.length str) ;
       res
     in
-    let doc, example =
+     let doc, example =
       (List.fold_right
 	 (fun param (rd, re) ->
 	    let name, doc, ex =
@@ -313,7 +358,41 @@ class emitter = object (self)
 		^^ align (flow (break 1) (List.map string (example)))
 		^^ !^"]"))
       ^^ hardline
+      ^^ doc *)
+    let doc, example =
+      (List.fold_right
+	 (fun param (rd, re) ->
+	    let name, doc, ex =
+	      match param with
+	      | Curry, name, doc, _ -> name, doc, name
+	      | _, name, doc, _ -> name, doc, "~" ^ name
+	    in
+            let doc = match doc with Doc doc -> Doc (String.lowercase doc) | Nodoc -> Nodoc in
+	    let doc = self # format_doc doc in
+	    if doc = empty then (rd, ex :: re)
+	    else
+              (* FIXME: @param does not work for curried args *)
+	      ((group (!^"[" ^^ !^name ^^ !^"]:" ^^ break 1)
+		^^ group (align doc)) :: rd, ex :: re))
+	 params ([], []))
+    in
+    let doc = separate hardline doc in
+    let fdoc = match fdoc with Doc doc -> Doc (String.lowercase doc) | Nodoc -> Nodoc in
+    if doc = empty then
+      group (nest 2
+	       (break 1 ^^ !^"[" ^^ !^name ^^ !^" "
+		^^ align (flow (break 1) (List.map string example))
+		^^ !^"]: "))
+      ^^ self # format_doc fdoc
+    else
+      group (nest 2
+	       (break 1 ^^ !^"[" ^^ !^name ^^ !^" "
+		^^ align (flow (break 1) (List.map string example))
+		^^ !^"]: "))
+      ^^ self # format_doc fdoc
+      ^^ hardline
       ^^ doc
+
 
   (* Injection methods ********************************************************)
 
@@ -1222,8 +1301,7 @@ class emitter = object (self)
 
   method format_method_interface (_, (tpath, tname) as abbrv) name params ret doc =
     let params =
-      [ (Curry, "this",
-         Doc ("The [" ^ string_of_ident (tpath, tname) ^ "] instance"),
+      [ (Curry, "this", Nodoc,
          Value (Abbrv (abbrv, Default), Var "this"))] @ params
     in
     self # format_function_interface name params ret doc
@@ -1248,3 +1326,4 @@ class emitter = object (self)
       ^^ format_val !^name (self # format_fun_type params ret) ]
 
 end
+*)

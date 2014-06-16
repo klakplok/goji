@@ -112,9 +112,12 @@ and value =
   (** Associates different mappings to the cases of an OCaml sum
       type. When converting from JavaScript, the first case whose
       {!guard} is true is selected. *)
-  | Tags of string list * variance option
-  (** A list of tags using polymorphic variants.
-      To be used only as phantom flags. *)
+  | Tags of string list * string list option
+  (** A list of tags to be used only as phantom parameters for
+      implementing tagged types. The first list is the list of
+      required tags, the second the list of possible other ones. If
+      [None], the tag is kept open. To accept build an open tag
+      list. Compiled using polymorphic variants). *)
 
 (** The body of a function / method binding. *)
 and body = 
