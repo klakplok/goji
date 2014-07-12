@@ -72,9 +72,9 @@ let format_let_in pat value body =
 
 let format_if cond bt bf =
   group
-    (group (!^"if " ^^ align cond ^^ !^" then (")
+    (group (!^"(if " ^^ align cond ^^ !^" then (")
      ^^ nest 2 (break 1 ^^ bt) ^^ break 1 ^^ !^") else ("
-     ^^ nest 2 (break 1 ^^ bf) ^^ break 1 ^^ !^")")
+     ^^ nest 2 (break 1 ^^ bf) ^^ break 1 ^^ !^"))")
     
 let format_match arg alts =
   group
