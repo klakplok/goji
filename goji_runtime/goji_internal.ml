@@ -50,7 +50,7 @@ let js_global : string -> any = fun n -> js_get (js_symbol "window") n
 
 let js_set_global : string -> any -> unit = fun n v -> js_set (js_symbol "window") n v
 
-external js_constant : string -> any = "caml_js_const"
+external js_constant : string -> any = "caml_js_expr"
 
 external js_call : any -> any array -> any = "caml_js_fun_call"
 
