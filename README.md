@@ -15,7 +15,7 @@ Its main features are:
  - Meta-generation of binding descriptions (built as an embedded DSL)
  - Customizable generation scheme, in particular to handle events
    either by hand or with your concurrency library of choice
- - Some static checking and optional insertion of dynamic cheks for
+ - Some static checking and optional insertion of dynamic checks for
    debugging purposes
  - Automated handling of JavaScript dependencies
 
